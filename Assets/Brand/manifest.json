@@ -1,0 +1,67 @@
+{
+  "product": "NotchQ",
+  "direction": "Quiet Signal",
+  "status": "Selected production asset set",
+  "descriptor": "AI quota meter",
+  "nameExplanation": "AI Notch Quota",
+  "rights": "All rights reserved for original artwork and source; third-party font rights retained",
+  "palette": {
+    "ink": "#252522",
+    "paper": "#F5F1E8",
+    "clay": "#B66D4F",
+    "supportingText": "#77756D",
+    "iconPaperHighlight": "#FBF8F1"
+  },
+  "typography": {
+    "wordmarkAndHeadings": "Georgia Regular",
+    "supportingText": "Helvetica Neue Regular; native app uses system sans",
+    "functionalBadge": "Libron Regular",
+    "portableDelivery": "Lettering outlined as editable SVG paths; no font binaries embedded"
+  },
+  "providerColors": {
+    "codex": "#FFFFFF",
+    "claude": "#D97757",
+    "standardMenuBarCodex": "Existing system text color for appearance readability",
+    "brandAccentHasProviderMeaning": false
+  },
+  "integration": {
+    "appIcon": "../../Resources/NotchQ.icns",
+    "appIconPNG": "../../Resources/NotchQ.png",
+    "appIconVectorMaster": "app-icon.svg",
+    "readmeHero": "readme-hero.svg",
+    "transparentMark": "mark.svg",
+    "transparentLockup": "lockup.svg",
+    "transparentWordmark": "wordmark.svg"
+  },
+  "icon": {
+    "masterPixels": 1024,
+    "tile": {
+      "x": 72,
+      "y": 72,
+      "width": 880,
+      "height": 880,
+      "cornerRadius": 202
+    },
+    "clearExterior": "Transparent",
+    "sizesInPoints": [
+      16,
+      32,
+      128,
+      256,
+      512
+    ],
+    "scales": [
+      1,
+      2
+    ],
+    "smallSizeVariant": "16-point assets widen the seam to about 1.25 logical pixels and omit the decorative clay dot",
+    "staticGeometry": "Reservoir heights and clay dot do not encode actual quota or status"
+  },
+  "fontLicense": "../../Resources/Libron-LICENSE.txt",
+  "symbol": {
+    "orientation": "Smaller NotchQ node on the left; larger native-notch node on the right",
+    "nativeNotch": "Larger right node",
+    "notchQ": "Smaller left node",
+    "accent": "Clay dot accompanies the smaller left node"
+  }
+}

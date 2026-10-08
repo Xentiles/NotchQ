@@ -1,0 +1,10 @@
+work/
+dist/
+releases/
+Archive/
+Design/
+.DS_Store
+Tests/*.mode
+*.p12
+*.p8
+*.keychain*
