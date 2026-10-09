@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem privately
+    url: https://github.com/Xentiles/NotchQ/security/advisories/new
+    about: Please don't post security problems in public issues.
+  - name: Install help
+    url: https://github.com/Xentiles/NotchQ#install
+    about: Steps for opening the unsigned beta (Privacy & Security → Open Anyway).

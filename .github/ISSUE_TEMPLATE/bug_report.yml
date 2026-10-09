@@ -1,0 +1,74 @@
+name: Bug report
+description: Something in NotchQ doesn't work or shows the wrong value.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Never include passwords, tokens, cookies, API keys, private conversations or personal file paths.**
+        Security problems: please use the [private security report](https://github.com/Xentiles/NotchQ/security/advisories/new) instead.
+  - type: input
+    id: version
+    attributes:
+      label: NotchQ version
+      description: NotchQ Settings → About.
+      placeholder: Bv0.2.0 (build 7)
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: macOS 15.6
+    validations:
+      required: true
+  - type: dropdown
+    id: chip
+    attributes:
+      label: Mac processor
+      options:
+        - Apple silicon (M-series)
+        - Intel
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Which part is affected?
+      multiple: true
+      options:
+        - Codex reading
+        - Claude reading
+        - Notch / menu-bar placement
+        - Installing or opening the app
+        - Settings
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: How Codex / Claude are installed
+      description: Desktop app, Homebrew, npm, nvm… The grey "Found automatically" / "Not found" line under each provider in Settings is helpful.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: Include the message shown in the NotchQ dropdown, if any.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed credentials, private conversations and personal paths from this report and any screenshots.
+          required: true

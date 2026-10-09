@@ -110,7 +110,9 @@ The badge shows **remaining account allowance**, not a session’s token count o
 
 ## Beta feedback
 
-Report bugs through [GitHub Issues](https://github.com/Xentiles/NotchQ/issues). Include the NotchQ version (shown in **About**, e.g. Bv0.2.0 build 7), macOS version, Mac processor, provider, and steps to reproduce. Remove credentials, private conversations and personal paths from any logs or screenshots you share.
+Report bugs and compatibility results through [GitHub Issues](https://github.com/Xentiles/NotchQ/issues/new/choose); the forms ask for the NotchQ version (shown in **About**, e.g. Bv0.2.0 build 7), macOS version, Mac processor and provider. Remove credentials, private conversations and personal paths from anything you share. See [CONTRIBUTING.md](CONTRIBUTING.md) for what helps most. Pull requests aren't accepted without prior agreement.
+
+Security problems: report privately as described in [SECURITY.md](SECURITY.md). Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License and branding
 

@@ -1,0 +1,24 @@
+name: Feedback or compatibility report
+description: Tell us how NotchQ works on your Mac, or what's confusing.
+labels: ["feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: Reports that NotchQ **works** are useful too, especially from Intel Macs and macOS 13–14.
+  - type: input
+    id: version
+    attributes:
+      label: NotchQ version
+      description: NotchQ Settings → About.
+      placeholder: Bv0.2.0 (build 7)
+  - type: input
+    id: mac
+    attributes:
+      label: Mac and macOS version
+      placeholder: MacBook Air M2, macOS 15.6
+  - type: textarea
+    id: feedback
+    attributes:
+      label: Your feedback
+    validations:
+      required: true
