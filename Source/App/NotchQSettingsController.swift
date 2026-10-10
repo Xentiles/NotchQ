@@ -28,6 +28,9 @@ final class NotchQSettingsController: NSObject, NSWindowDelegate {
     private let claudeStatus = NSTextField(wrappingLabelWithString: "Claude Code connection not configured")
     private let codexPath = NSTextField(wrappingLabelWithString: "")
     private let claudePath = NSTextField(wrappingLabelWithString: "")
+    // Plans per OpenAI's Codex pricing page (Oct 2026): Free/Go are desktop-only with unspecified limits;
+    // credit-based workspaces and API-key sign-ins have no usage windows to report.
+    private let codexHelp = NSTextField(wrappingLabelWithString: "Shows the allowance of ChatGPT plans with Codex usage limits, such as Plus, Pro and Business. Free and Go plans, credit-based workspaces and API-key sign-ins may not report a percentage.")
     private let claudeHelp = NSTextField(wrappingLabelWithString: "Uses Claude Code’s own Pro or Max sign-in. Free-plan percentages are unavailable. The status-line fallback is optional.")
     private let loginStatus = NSTextField(wrappingLabelWithString: "")
     private let connect = NSButton(title: "Status-line fallback…", target: nil, action: nil)
@@ -92,6 +95,8 @@ final class NotchQSettingsController: NSObject, NSWindowDelegate {
         let chooseCodex = notchQButton("Choose CLI…", #selector(notchQChooseCLI(_:))); chooseCodex.tag = 0
         codexAutomatic.target = self; codexAutomatic.action = #selector(notchQUseAutomatic(_:)); codexAutomatic.bezelStyle = .rounded; codexAutomatic.tag = 0
         codexGroup.addArrangedSubview(notchQRow([notchQButton("Open Codex", #selector(notchQOpenCodex)), chooseCodex, codexAutomatic]))
+        codexHelp.font = .systemFont(ofSize: 12); codexHelp.textColor = .secondaryLabelColor
+        notchQAdd(codexHelp, to: codexGroup)
         notchQAdd(codexGroup)
         let claudeGroup = notchQGroup()
         claude.target = self; claude.action = #selector(notchQChangePreferences(_:)); claudeGroup.addArrangedSubview(claude)

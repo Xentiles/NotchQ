@@ -14,7 +14,7 @@ func notchQUsageMenuRows(_ state: NotchQUsageState, now: Date = Date(), timeZone
         let right = $1.element.minutes ?? Int.max
         return left == right ? $0.offset < $1.offset : left < right
     }.map(\.element)
-    let prefix = state.error == nil ? "" : "Last known "
+    let prefix = state.error == nil || state.holding ? "" : "Last known "
     rows += windows.map { "\(prefix)\($0.label): \($0.remaining)% left" }
     let resetFormat = DateFormatter()
     resetFormat.dateStyle = .medium; resetFormat.timeStyle = .short; resetFormat.timeZone = timeZone
@@ -29,7 +29,8 @@ func notchQUsageMenuRows(_ state: NotchQUsageState, now: Date = Date(), timeZone
         rows.append("Last updated: \(time.string(from: updated))\(suffix)")
     }
     if now < state.nextAllowed {
-        rows.append("Retry in \(Int(ceil(state.nextAllowed.timeIntervalSince(now)))) seconds")
+        let seconds = Int(ceil(state.nextAllowed.timeIntervalSince(now)))
+        rows.append(state.error == nil ? "Next check in \(seconds) seconds" : "Retry in \(seconds) seconds")
     }
     return rows
 }

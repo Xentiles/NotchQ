@@ -4,7 +4,7 @@ enum NotchQPreferences {
     static let applicationIdentifier = "io.github.xentiles.NotchQ"
     static let legacyIdentifier = "local.dominik.codex-usage"
     static let refreshInterval: TimeInterval = 10
-    static let claudeRefreshInterval: TimeInterval = 60
+    static let claudeRefreshInterval: TimeInterval = 120
     static let claudeMaximumAge: TimeInterval = 180
     static var defaults: UserDefaults { .standard }
     static var codexEnabled: Bool { defaults.bool(forKey: "codexEnabled") }

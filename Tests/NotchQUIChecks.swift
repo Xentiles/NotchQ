@@ -25,8 +25,8 @@ func renderNotchQSettingsPreview(_ path: String) {
     let output = URL(fileURLWithPath: path)
     let fixtures: [(String, NSAppearance.Name, String, String)] = [
         ("waiting", .darkAqua, delegate.notchQProviderStatusMessage(.codex), delegate.notchQProviderStatusMessage(.claude)),
-        ("light", .aqua, "13% remaining; checked every 10 seconds.", "99% remaining; checked every minute."),
-        ("dark", .darkAqua, "13% remaining; checked every 10 seconds.", "99% remaining; checked every minute."),
+        ("light", .aqua, "13% remaining; checked every 10 seconds.", "99% remaining; checked every 2 minutes."),
+        ("dark", .darkAqua, "13% remaining; checked every 10 seconds.", "99% remaining; checked every 2 minutes."),
         ("error", .darkAqua, "The desktop app is not running. Open it, or turn off “Show only running desktop apps” for terminal use.", "Claude usage check timed out. Sign in to Claude Code; terminal output may be incompatible. Retrying automatically."),
         ("setup", .aqua, "Codex was not found on this Mac. Install it and sign in, or use Choose CLI…", "Claude Code was not found on this Mac. Install it and sign in, or use Choose CLI…")
     ]

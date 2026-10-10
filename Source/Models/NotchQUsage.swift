@@ -38,15 +38,22 @@ struct NotchQUsageSnapshot {
     }
 }
 
-/// Claude's usage service rate-limits frequent /usage checks, so Claude polls less often than Codex,
-/// doubles its wait after each throttle (up to a cap), and steps back down one level per successful read.
+/// Claude's usage service rate-limits frequent /usage checks (a 4-hour run at 60 s was throttled about
+/// every 5 minutes), so Claude polls every 2 minutes, doubles its wait after each throttle (up to a cap),
+/// and only steps back down one level after `stepDownAfter` successful reads in a row.
 struct NotchQPollCadence {
     let base: TimeInterval
     let maximum: TimeInterval
+    var stepDownAfter = 5
     private(set) var level = 0
+    private var cleanReads = 0
     var interval: TimeInterval { min(maximum, base * pow(2, Double(level))) }
-    mutating func notchQThrottled() -> TimeInterval { level = min(level + 1, 4); return interval }
-    mutating func notchQSucceeded() -> TimeInterval { level = max(level - 1, 0); return interval }
+    mutating func notchQThrottled() -> TimeInterval { level = min(level + 1, 4); cleanReads = 0; return interval }
+    mutating func notchQSucceeded() -> TimeInterval {
+        cleanReads += 1
+        if level > 0 && cleanReads >= stepDownAfter { level -= 1; cleanReads = 0 }
+        return interval
+    }
 }
 
 struct NotchQUsageState {
@@ -56,13 +63,16 @@ struct NotchQUsageState {
     var failures = 0
     var nextAllowed = Date.distantPast
     var throttledUntil = Date.distantPast
-    var percentage: String { error == nil ? snapshot?.displayWindow.map { "\($0.remaining)%" } ?? "—%" : "—%" }
+    /// During a short rate limit the last reading stays on the badge until this time (then "—%").
+    var holdUntil: Date?
+    var holding: Bool { error != nil && snapshot != nil && (holdUntil.map { Date() < $0 } ?? false) }
+    var percentage: String { error == nil || holding ? snapshot?.displayWindow.map { "\($0.remaining)%" } ?? "—%" : "—%" }
     mutating func notchQPrepareManualRefresh() { nextAllowed = throttledUntil }
     mutating func notchQRecordSuccess(_ value: NotchQUsageSnapshot, now: Date = Date()) {
-        snapshot = value; updated = now; error = nil; failures = 0; nextAllowed = .distantPast; throttledUntil = .distantPast
+        snapshot = value; updated = now; error = nil; failures = 0; nextAllowed = .distantPast; throttledUntil = .distantPast; holdUntil = nil
     }
     mutating func notchQRecordFailure(_ message: String, now: Date = Date(), retryAfter: Double? = nil) {
-        error = message; failures += 1
+        error = message; failures += 1; holdUntil = nil
         let delay = min(300, 10 * pow(2, Double(min(failures - 1, 5))))
         if let retry = retryAfter, retry.isFinite, retry > 0 { throttledUntil = now.addingTimeInterval(retry) }
         nextAllowed = max(now.addingTimeInterval(delay), throttledUntil)

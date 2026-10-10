@@ -88,7 +88,7 @@ func runNotchQProviderStatusChecks() {
     delegate.state.notchQRecordSuccess(snapshot)
     delegate.claudeState.notchQRecordSuccess(snapshot)
     delegate.claudeReadWasPolled = true
-    precondition(delegate.notchQProviderStatusMessage(.codex) == "70% remaining; checked every 10 seconds." && delegate.notchQProviderStatusMessage(.claude) == "70% remaining; checked every minute.", "live status states each provider's cadence")
+    precondition(delegate.notchQProviderStatusMessage(.codex) == "70% remaining; checked every 10 seconds." && delegate.notchQProviderStatusMessage(.claude) == "70% remaining; checked every 2 minutes.", "live status states each provider's cadence")
     delegate.claudeReadWasPolled = false
     precondition(delegate.notchQProviderStatusMessage(.claude).contains("snapshot") && !delegate.notchQProviderStatusMessage(.claude).contains("checked every"), "fallback snapshots do not claim live polling")
     defaults.set(true, forKey: "onlyRunningApps")
@@ -263,10 +263,12 @@ func runNotchQManualRefreshChecks(_ server: URL) {
     delegate.notchQRefreshUsage()
     let limitedEnd = Date().addingTimeInterval(4)
     while (delegate.claudeClient.busy || !delegate.manualRefreshPending.isEmpty) && Date() < limitedEnd { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
-    precondition(delegate.claudeState.error!.contains("rate limiting") && delegate.claudeState.percentage == "—%" && delegate.claudeCadence.level == 1, "rate limit is explained and stale numbers are not shown as current")
+    precondition(delegate.claudeState.error!.contains("rate limiting") && delegate.claudeState.error!.contains("Showing the") && delegate.claudeCadence.level == 1, "rate limit is explained")
+    precondition(delegate.claudeState.holding && delegate.claudeState.percentage == "80%" && delegate.notch!.button.attributedTitle.string == "80%", "the just-read value stays on the badge during a short limit; the stale /usage screen numbers are never used")
+    precondition(notchQUsageMenuRows(delegate.claudeState).contains("5-hour: 80% left") && delegate.item.button!.toolTip!.contains("last reading"), "dropdown and tooltip say it's the last reading")
     precondition(NotchQDiagnostics.shared.entries.last { $0.event == .failed && $0.provider == .claude }?.reason == .throttled, "the shareable log records why Claude failed")
     let throttle = delegate.claudeState.throttledUntil
-    precondition(throttle.timeIntervalSinceNow > 100 && throttle.timeIntervalSinceNow <= 120, "first rate limit waits two minutes")
+    precondition(throttle.timeIntervalSinceNow > 220 && throttle.timeIntervalSinceNow <= 240, "first rate limit waits four minutes")
     delegate.notchQRefreshUsage(); delegate.notchQRefreshUsage()
     precondition(!delegate.claudeClient.busy && delegate.manualRefreshPending.isEmpty && delegate.claudeState.nextAllowed == throttle, "refresh during a rate limit is not queued and does not retry early")
     delegate.menuWillOpen(delegate.item.menu!)

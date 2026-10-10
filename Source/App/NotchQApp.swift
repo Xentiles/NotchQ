@@ -79,7 +79,7 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if provider == .codex {
             return state.error ?? state.snapshot?.displayWindow.map { "\($0.remaining)% remaining; checked every 10 seconds." } ?? "Waiting for usage."
         }
-        return claudeState.error ?? claudeState.snapshot?.displayWindow.map { claudeReadWasPolled ? "\($0.remaining)% remaining; checked every minute." : "\($0.remaining)% remaining; recent status-line snapshot." } ?? "Waiting for usage."
+        return claudeState.error ?? claudeState.snapshot?.displayWindow.map { claudeReadWasPolled ? "\($0.remaining)% remaining; checked every 2 minutes." : "\($0.remaining)% remaining; recent status-line snapshot." } ?? "Waiting for usage."
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -102,7 +102,7 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let center = NSWorkspace.shared.notificationCenter
         // Pause for system sleep, display sleep and fast user switching. Any of the wake signals
         // resumes, so one missed didWake notification cannot leave polling stopped until relaunch.
-        center.addObserver(self, selector: #selector(notchQWillSleep), name: NSWorkspace.willSleepNotification, object: nil)
+        center.addObserver(self, selector: #selector(notchQSystemWillSleep), name: NSWorkspace.willSleepNotification, object: nil)
         center.addObserver(self, selector: #selector(notchQPause), name: NSWorkspace.screensDidSleepNotification, object: nil)
         center.addObserver(self, selector: #selector(notchQSessionResigned), name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
         center.addObserver(self, selector: #selector(notchQResume), name: NSWorkspace.didWakeNotification, object: nil)
@@ -157,7 +157,11 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func notchQStartTimer() {
         timer?.invalidate()
-        let timer = Timer(timeInterval: NotchQPreferences.refreshInterval, repeats: true) { [weak self] _ in self?.notchQPollUsage() }
+        let timer = Timer(timeInterval: NotchQPreferences.refreshInterval, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.notchQPollUsage()
+            if let hold = self.claudeState.holdUntil, Date() >= hold { self.claudeState.holdUntil = nil; self.notchQRenderBadge() }
+        }
         self.timer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
@@ -209,6 +213,7 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let displayed = displayedProviders
         let names = displayed.map { provider in
             let reading = provider == .codex ? state : claudeState
+            if reading.holding, let window = reading.snapshot?.displayWindow { return "\(provider.displayName) \(window.label) \(reading.percentage) remaining (last reading; \(reading.error!))" }
             if let error = reading.error { return "\(provider.displayName) usage unavailable: \(error)" }
             guard let window = reading.snapshot?.displayWindow else { return "\(provider.displayName) usage unavailable; awaiting a fresh reading" }
             return "\(provider.displayName) \(window.label) \(reading.percentage) remaining"
@@ -266,7 +271,11 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.claudeState.nextAllowed = now.addingTimeInterval(self.claudeCadence.notchQSucceeded())
             case .failure(let error) where error.retryAfter != nil:
                 let wait = self.claudeCadence.notchQThrottled()
-                self.claudeState.notchQRecordFailure("Claude’s usage service is rate limiting checks. Next check in about \(Int(wait / 60)) min.", now: now, retryAfter: wait)
+                let readAt = self.claudeState.updated
+                let reading = readAt.map { "Showing the \(DateFormatter.localizedString(from: $0, dateStyle: .none, timeStyle: .short)) reading. " } ?? ""
+                self.claudeState.notchQRecordFailure("Claude’s usage service is rate limiting checks. \(reading)Next check in about \(Int(wait / 60)) min.", now: now, retryAfter: wait)
+                // Keep a recent reading on the badge instead of flickering to "—%" for a short limit.
+                if let readAt = readAt, now.timeIntervalSince(readAt) < 300 { self.claudeState.holdUntil = readAt.addingTimeInterval(300) }
             case .failure(let error):
                 self.claudeState.notchQRecordFailure(error.description, now: now)
                 self.claudeState.nextAllowed = max(self.claudeState.nextAllowed, now.addingTimeInterval(self.claudeCadence.interval))
@@ -437,15 +446,16 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func notchQWillSleep() {
         menuTracking = false; displayRecoveryPending = false; item.menu?.cancelTracking()
         sleeping = true; recoveryGeneration += 1; requestGeneration += 1; manualRefreshPending.removeAll()
+        state.holdUntil = nil; claudeState.holdUntil = nil
         timer?.invalidate(); client.notchQStopClient(); claudeClient.notchQStop()
         state.error = "Mac asleep; waiting for a fresh reading."; claudeState.error = state.error
         notch?.notchQHideBadge(animated: false); notchQRenderBadge()
-        NotchQDiagnostics.shared.record(.sleeping, reason: .systemSleep)
     }
     @objc func notchQDidWake() {
         sleeping = false; state.notchQPrepareManualRefresh(); claudeState.notchQPrepareManualRefresh()
         notchQRecoverDisplay(); notchQRefreshUsage(); notchQStartTimer()
     }
+    @objc func notchQSystemWillSleep() { notchQWillSleep(); NotchQDiagnostics.shared.record(.sleeping, reason: .systemSleep) }
     @objc func notchQPause() {
         guard !sleeping else { return }
         notchQWillSleep(); NotchQDiagnostics.shared.record(.paused, reason: sessionActive ? .displaySleep : .otherUser)

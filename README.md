@@ -5,7 +5,7 @@
 
 # NotchQ
 
-**Bv0.3.1 Beta** · [Download for Mac](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.3.1)
+**Bv0.3.2 Beta** · [Download for Mac](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.3.2)
 
 A small native Mac app that keeps your remaining AI allowance beside the camera notch. **NotchQ** combines *notch* and *quota*: **AI Notch Quota**.
 
@@ -56,13 +56,19 @@ NotchQ looks for the `codex` and `claude` command-line tools where their install
 | Provider | Connection | Update behavior |
 | --- | --- | --- |
 | Codex | Your installed Codex app or CLI, found automatically, and its existing sign-in | **Every 10 seconds** while enabled and awake; failures back off. |
-| Claude | Claude Code’s read-only `/usage` command, found automatically, and its existing Pro/Max sign-in | **Every 60 seconds** while enabled and awake; after a rate limit, 2, 4, 8, then up to 15 minutes. No Claude Code settings are changed. An optional status-line fallback is used only when no local CLI can be run; its snapshots older than three minutes are hidden. |
+| Claude | Claude Code’s read-only `/usage` command, found automatically, and its existing Pro/Max sign-in | **Every 2 minutes** while enabled and awake; after a rate limit, 4, 8, then up to 15 minutes. No Claude Code settings are changed. An optional status-line fallback is used only when no local CLI can be run; its snapshots older than three minutes are hidden. |
 
-### Update frequency: why Claude is once a minute
+### Update frequency: why Claude is every 2 minutes
 
-**Claude can update at most once every 60 seconds.** Each check starts Claude Code and runs `/usage`, which asks Anthropic’s usage service for your allowance. That service rate-limits frequent checks. At NotchQ’s earlier 10-second cadence it began refusing them. Claude Code then showed figures up to 20 minutes old, marked “rate limited”. NotchQ never shows such figures as current, so the badge waited at **—%**. The exact limit isn’t published; checking every 60 seconds asks six times less often. If a limit still happens, NotchQ says so in the dropdown and Settings, backs off (2 → 4 → 8 → 15 minutes), then steps back to 60 seconds after successful readings. **Refresh** does not bypass a rate limit.
+**Claude updates at most once every 2 minutes.** Each check starts Claude Code and runs `/usage`, which asks Anthropic’s usage service for your allowance. That service rate-limits frequent checks, and its exact limit isn’t published:
 
-When Claude Code can run, NotchQ deliberately uses `/usage` as its only Claude source. Claude Code’s status line also reports usage after each reply. Combining the two would make the badge jump between them, for example 85% then back to 86%: the sources round differently (decimal vs. whole percentages) and are captured at different moments. With one source, the number only moves down while you work, and only rises when your allowance actually resets. The cost is up to a minute of delay.
+- At NotchQ’s first 10-second cadence, it refused checks entirely. Claude Code then showed figures up to 20 minutes old, marked “rate limited”, which NotchQ never shows as current.
+- At 60 seconds, a 4-hour test was still rate limited about every 5 minutes. The service tolerated roughly one check every 80–90 seconds.
+- At 2 minutes, NotchQ stays under that.
+
+If a limit happens anyway, NotchQ keeps showing the last Claude reading for up to 5 minutes. The dropdown says which time it’s from, so short limits don’t flicker to **—%**. NotchQ backs off (4 → 8 → 15 minutes) and only steps back down after five clean readings in a row. **Refresh** does not bypass a rate limit.
+
+When Claude Code can run, NotchQ deliberately uses `/usage` as its only Claude source. Claude Code’s status line also reports usage after each reply. Combining the two would make the badge jump between them, for example 85% then back to 86%: the sources round differently (decimal vs. whole percentages) and are captured at different moments. With one source, the number only moves down while you work, and only rises when your allowance actually resets. The cost is up to 2 minutes of delay.
 
 **Codex doesn’t have this limit in practice.** Codex offers a structured `account/rateLimits/read` request through its app server, designed for apps to call. NotchQ keeps one Codex connection open and sends that request every 10 seconds, rather than starting a new terminal session each time. Codex has not rate limited that cadence in testing. If it ever reports throttling, NotchQ waits as long as Codex asks (60 seconds if it doesn’t say).
 
@@ -82,6 +88,7 @@ The universal app contains **Apple silicon and Intel** binaries and has a **macO
 | --- | --- |
 | NotchQ | macOS 13+; Apple silicon or Intel. Verified on an Apple silicon Mac, with Intel fixture checks under Rosetta. Physical Intel Macs and older macOS installations have not been independently tested. |
 | Codex desktop integration | An Apple silicon Mac and an existing Codex sign-in. The [current Codex desktop download](https://learn.chatgpt.com/docs/app) is for Apple silicon. |
+| Codex percentages | A ChatGPT plan with Codex usage limits, such as Plus, Pro or Business ([OpenAI's plan overview](https://learn.chatgpt.com/docs/pricing)). Pro currently has no 5-hour window, so NotchQ shows the weekly allowance. Free and Go (desktop app only), credit-based workspaces and API-key sign-ins may not report limits; NotchQ then shows **—%** and says why. |
 | Claude usage connection | [Claude Code on macOS 13+](https://code.claude.com/docs/en/setup), on Intel or Apple silicon, signed in with a Pro or Max account. The status-line fallback is optional. Claude Desktop sign-in alone may not authenticate Claude Code. |
 
 Provider requirements can change independently of NotchQ. To show a provider only while its desktop app is open, turn on **Show only running desktop apps**. Claude Free percentages are unavailable. Physical Intel and older-macOS testing remain outstanding.
@@ -114,13 +121,13 @@ A wide notch does not prevent a reading from being received. If there is no usab
 2. Check the path line under the provider in Settings. If it says **Not found**, install the tool or use **Choose CLI…**.
 3. For Claude, sign into **Claude Code** with a supported Pro/Max account (run `claude` once in Terminal). NotchQ’s background CLI checks read account usage without sending AI prompts.
 4. If **Show only running desktop apps** is on, the provider appears only while its desktop app is open. Turn it off for terminal-only use.
-5. Claude updates at most once every 60 seconds (see [Update frequency](#update-frequency-why-claude-is-once-a-minute)). If Claude’s usage service is rate limiting checks, NotchQ shows that with the time of the next check, and **Refresh** cannot bypass it. The status-line fallback hides readings older than three minutes. **Refresh** performs a read-only check; it does not run an AI prompt.
+5. Claude updates at most once every 2 minutes (see [Update frequency](#update-frequency-why-claude-is-every-2-minutes)). If Claude’s usage service is rate limiting checks, NotchQ shows that with the time of the next check, and **Refresh** cannot bypass it. The status-line fallback hides readings older than three minutes. **Refresh** performs a read-only check; it does not run an AI prompt.
 
 The badge shows **remaining account allowance**, not a session’s token count or context-window percentage.
 
 ## Beta feedback
 
-Report bugs and compatibility results through [GitHub Issues](https://github.com/Xentiles/NotchQ/issues/new/choose); the forms ask for the NotchQ version (shown in **About**, e.g. Bv0.3.1 build 9), macOS version, Mac processor and provider. Remove credentials, private conversations and personal paths from anything you share. See [CONTRIBUTING.md](CONTRIBUTING.md) for what helps most. Pull requests aren't accepted without prior agreement.
+Report bugs and compatibility results through [GitHub Issues](https://github.com/Xentiles/NotchQ/issues/new/choose); the forms ask for the NotchQ version (shown in **About**, e.g. Bv0.3.2 build 10), macOS version, Mac processor and provider. Remove credentials, private conversations and personal paths from anything you share. See [CONTRIBUTING.md](CONTRIBUTING.md) for what helps most. Pull requests aren't accepted without prior agreement.
 
 **Attach NotchQ's log** to make a report much easier to solve. In Terminal, run:
 

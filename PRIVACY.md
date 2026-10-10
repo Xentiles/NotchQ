@@ -14,7 +14,7 @@ of displaying raw responses that could contain credentials.
 
 Claude checks start automatically when Claude Code is found and Claude is
 enabled; they do not change Claude Code settings. For regular checks, NotchQ starts a fresh background Claude Code terminal process
-every minute while awake (less often after a rate limit), reads one complete
+every 2 minutes while awake (less often after a rate limit), reads one complete
 `/usage` response, and closes it.
 Model tools, hooks and MCP connections are disabled for that checker. It uses a
 private empty folder and stores no raw terminal output. Authentication stays

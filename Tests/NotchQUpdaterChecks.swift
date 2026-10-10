@@ -142,7 +142,7 @@ func runNotchQLogReasonChecks() {
         ("Claude Code was not found. Install Claude Code and sign in with Pro/Max, or use Choose CLI…", .notFound),
         ("Claude usage checker stopped after unexpected model activity. Restart NotchQ to retry.", .safetyStop),
         ("Claude usage-check folder is not empty. Setup requires attention.", .incompatible),
-        ("Usage data unavailable for this account.", .notFound), ("Cannot fetch usage right now. Retrying automatically.", .rejected)]
+        ("Codex reports no usage limits for this account, so there's no percentage to show. Plans such as Plus, Pro and Business have limits; Free, Go, credit-based and API-key sign-ins may not.", .noLimits), ("Cannot fetch usage right now. Retrying automatically.", .rejected)]
     for (message, reason) in cases { precondition(NotchQDiagnostics.notchQReason(for: message) == reason, "reason for: \(message)") }
     let before = NotchQDiagnostics.shared.entries.count
     NotchQDiagnostics.shared.record(.updateFailed, reason: .signature)

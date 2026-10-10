@@ -48,7 +48,7 @@ final class NotchQCodexClient {
                 switch result {
                 case .success(let object):
                     if let value = NotchQUsageSnapshot.notchQParseCodexLimits(object) { completion(.success(value)) }
-                    else { completion(.failure(.rejected("Usage data unavailable for this account.", nil))) }
+                    else { completion(.failure(.rejected("Codex reports no usage limits for this account, so there's no percentage to show. Plans such as Plus, Pro and Business have limits; Free, Go, credit-based and API-key sign-ins may not.", nil))) }
                 case .failure(let error): completion(.failure(error))
                 }
             }

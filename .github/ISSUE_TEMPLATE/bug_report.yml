@@ -12,7 +12,7 @@ body:
     attributes:
       label: NotchQ version
       description: NotchQ Settings → About.
-      placeholder: Bv0.3.1 (build 9)
+      placeholder: Bv0.3.2 (build 10)
     validations:
       required: true
   - type: input
