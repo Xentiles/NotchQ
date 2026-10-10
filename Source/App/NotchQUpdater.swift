@@ -97,7 +97,20 @@ final class NotchQUpdater {
         case idle, checking, upToDate, available(NotchQRelease), downloading(Int?), installing
         case manualOnly(NotchQRelease, String), failed(String)
     }
-    private(set) var phase: Phase = .idle { didSet { onChange?() } }
+    private(set) var phase: Phase = .idle { didSet { notchQLogPhase(previous: oldValue); onChange?() } }
+    private func notchQLogPhase(previous: Phase) {
+        let log = NotchQDiagnostics.shared
+        switch phase {
+        case .upToDate: log.record(.updateChecked, reason: .upToDate, detail: current.description)
+        case .available(let release): if previous != phase { log.record(.updateAvailable, detail: "\(current) -> \(release.version)") }
+        case .manualOnly(let release, _): log.record(.updateAvailable, reason: .manualOnly, detail: "\(current) -> \(release.version)")
+        case .installing: log.record(.updateInstalling, detail: available.map { "\(current) -> \($0.version)" })
+        case .failed(let message):
+            let reason: NotchQDiagnostics.Reason = message.contains("signature") ? .signature : message.contains("download") ? .download : message.contains("check for updates") ? .disconnected : .rejected
+            log.record(.updateFailed, reason: reason)
+        case .idle, .checking, .downloading: break
+        }
+    }
     #if NOTCHQ_TESTING
     func notchQPreview(_ phase: Phase) { self.phase = phase }
     #endif
@@ -274,9 +287,11 @@ final class NotchQUpdater {
         catch {
             try? files.removeItem(at: target)
             try? files.moveItem(at: backup, to: target)
+            NotchQDiagnostics.shared.record(.updateFailed, reason: .rejected, detail: "helper=restored-previous")
             reopen(); return 5
         }
         reopen()
+        NotchQDiagnostics.shared.record(.updateInstalling, detail: "helper=installed")
         return 0
     }
 }

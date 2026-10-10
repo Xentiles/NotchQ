@@ -6,8 +6,8 @@ Only the **latest release** receives fixes. Please check that you are on it (Not
 
 | Version | Supported |
 | --- | --- |
-| Bv0.3.0 (latest) | Yes |
-| Bv0.2.0 and earlier | No |
+| Bv0.3.1 (latest) | Yes |
+| Bv0.3.0 and earlier | No (update in Settings) |
 
 ## Reporting a vulnerability
 

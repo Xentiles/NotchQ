@@ -16,11 +16,13 @@ NotchQ's source is shared for transparency under an **all-rights-reserved licens
 
 ## A good bug report
 
-- **NotchQ version:** open NotchQ Settings → **About** (for example *Bv0.3.0 (build 8)*).
+- **NotchQ version:** open NotchQ Settings → **About** (for example *Bv0.3.1 (build 9)*).
 - **macOS version** and **Mac model / chip** (Apple silicon or Intel).
 - **Provider:** Codex, Claude or both, and how it's installed (desktop app, Homebrew, npm, nvm…). The grey **Found automatically / Not found** line under each provider in Settings helps.
 - **What happened and what you expected**, with steps to reproduce.
 - The message shown in the NotchQ dropdown, if there is one.
+- **NotchQ's log**, which contains no personal data. Run this in Terminal and paste the output:
+  `/usr/bin/log show --last 2h --style compact --predicate 'subsystem == "io.github.xentiles.NotchQ"'`
 
 **Never include** passwords, tokens, cookies, API keys, private conversations or personal file paths in an issue or screenshot.
 

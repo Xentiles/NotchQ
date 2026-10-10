@@ -22,10 +22,12 @@ with Claude Code; NotchQ does not read its credentials or call private endpoints
 The terminal output parser keeps only allowance percentages/windows and reported reset text. No model
 prompt is generated to refresh usage.
 
-Diagnostics retain up to 128 timestamped events in memory, containing fixed event
-codes, provider names, percentages, request durations and window visibility flags.
-The optional `--diagnostics` launch flag prints those events locally. Raw terminal
-output, account identifiers and authentication data are excluded.
+Diagnostics are fixed event and reason codes (for example `reason=throttled`),
+provider names, percentages, request durations, NotchQ and macOS versions, and
+window visibility flags. They are written to the macOS log on this Mac only
+(failures and state changes; routine checks are not kept) and are never sent
+anywhere. You choose whether to share them. File paths, raw terminal output,
+account identifiers and authentication data are never logged.
 
 The optional status-line fallback is installed only after the user chooses it
 in Settings. It wraps the existing user status-line command and stores a backup,

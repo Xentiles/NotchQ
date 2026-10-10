@@ -264,6 +264,7 @@ func runNotchQManualRefreshChecks(_ server: URL) {
     let limitedEnd = Date().addingTimeInterval(4)
     while (delegate.claudeClient.busy || !delegate.manualRefreshPending.isEmpty) && Date() < limitedEnd { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
     precondition(delegate.claudeState.error!.contains("rate limiting") && delegate.claudeState.percentage == "—%" && delegate.claudeCadence.level == 1, "rate limit is explained and stale numbers are not shown as current")
+    precondition(NotchQDiagnostics.shared.entries.last { $0.event == .failed && $0.provider == .claude }?.reason == .throttled, "the shareable log records why Claude failed")
     let throttle = delegate.claudeState.throttledUntil
     precondition(throttle.timeIntervalSinceNow > 100 && throttle.timeIntervalSinceNow <= 120, "first rate limit waits two minutes")
     delegate.notchQRefreshUsage(); delegate.notchQRefreshUsage()

@@ -120,6 +120,7 @@ func runNotchQChecks() {
     runNotchQClaudeChecks()
     runNotchQDetectionChecks()
     runNotchQUpdaterChecks()
+    runNotchQLogReasonChecks()
 }
 
 func runNotchQTransportChecks(_ server: URL) {

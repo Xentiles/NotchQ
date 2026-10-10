@@ -21,6 +21,7 @@ final class NotchQExecutableLocator {
     var loginPath: [String] = [] { didSet { notchQInvalidate() } }
     var cacheLifetime: TimeInterval = 60
     private var cache: [NotchQProvider: (location: NotchQExecutableLocation?, at: Date)] = [:]
+    private var reported: [NotchQProvider: NotchQDiagnostics.Reason] = [:]
     private var capturing = false
 
     init(home: URL = FileManager.default.homeDirectoryForCurrentUser,
@@ -39,6 +40,11 @@ final class NotchQExecutableLocator {
         if let cached = cache[provider], now.timeIntervalSince(cached.at) < cacheLifetime { return cached.location }
         let location = notchQResolve(provider)
         cache[provider] = (location, now)
+        // Log only changes in how a CLI was found; never its path.
+        let how: NotchQDiagnostics.Reason = location.map { $0.source == .chosen ? .chosen : .automatic } ?? .notFound
+        if reported[provider] != how, self === NotchQExecutableLocator.shared {
+            reported[provider] = how; NotchQDiagnostics.shared.record(.detected, provider: provider, reason: how)
+        }
         return location
     }
 
@@ -141,6 +147,7 @@ final class NotchQExecutableLocator {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 self.capturing = false
+                NotchQDiagnostics.shared.record(.detected, detail: path.map { "loginPATH=captured(\($0.count))" } ?? "loginPATH=unavailable")
                 if let path = path, path != self.loginPath { self.loginPath = path; completion() }
             }
         }

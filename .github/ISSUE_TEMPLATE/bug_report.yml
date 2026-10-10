@@ -12,7 +12,7 @@ body:
     attributes:
       label: NotchQ version
       description: NotchQ Settings → About.
-      placeholder: Bv0.3.0 (build 8)
+      placeholder: Bv0.3.1 (build 9)
     validations:
       required: true
   - type: input
@@ -65,6 +65,14 @@ body:
       placeholder: |
         1. …
         2. …
+  - type: textarea
+    id: log
+    attributes:
+      label: NotchQ log (optional, very helpful)
+      description: |
+        In Terminal, run the command below and paste the output. It contains only versions, event and reason codes and percentages, with no paths, tokens or account details.
+        `/usr/bin/log show --last 2h --style compact --predicate 'subsystem == "io.github.xentiles.NotchQ"'`
+      render: text
   - type: checkboxes
     id: privacy
     attributes:

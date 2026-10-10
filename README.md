@@ -5,7 +5,7 @@
 
 # NotchQ
 
-**Bv0.3.0 Beta** · [Download for Mac](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.3.0)
+**Bv0.3.1 Beta** · [Download for Mac](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.3.1)
 
 A small native Mac app that keeps your remaining AI allowance beside the camera notch. **NotchQ** combines *notch* and *quota*: **AI Notch Quota**.
 
@@ -70,7 +70,7 @@ When Claude Code can run, NotchQ deliberately uses `/usage` as its only Claude s
 
 The read-only Claude checker starts a fresh private terminal process for each check and closes it after one complete English `/usage` response. This avoids reused terminal state and session caches. It is less stable than a structured API: incompatible CLI versions fail visibly and back off. Authentication remains with Claude Code, and usage values have the precision supplied by its terminal display.
 
-Manual refresh requests one follow-up check if a provider is already busy. A provider that is being rate limited is skipped rather than queued; its status shows when it will be checked next. Codex manual checks reconnect its app server so the vendor-owned sign-in is reloaded. Wake and Spaces events restore the nonactivating badge without taking keyboard focus or adding usage requests on every desktop switch. Diagnostics retain at most 128 fixed events in memory; launching with `--diagnostics` prints timestamps, event codes and numeric measurements, without credentials or terminal transcripts.
+Manual refresh requests one follow-up check if a provider is already busy. A provider that is being rate limited is skipped rather than queued; its status shows when it will be checked next. Codex manual checks reconnect its app server so the vendor-owned sign-in is reloaded. Wake and Spaces events restore the nonactivating badge without taking keyboard focus or adding usage requests on every desktop switch. NotchQ writes fixed event and reason codes to the macOS log (see [Beta feedback](#beta-feedback)). Only failures, state changes and the first success after a failure are kept; routine checks are not stored. Launching with `--diagnostics` also prints events to Terminal. Neither ever includes credentials, file paths or terminal transcripts.
 
 NotchQ does not bundle vendor CLIs, call private Claude usage endpoints, extract passwords/cookies, or run model prompts to obtain readings. See [privacy details](PRIVACY.md).
 
@@ -120,7 +120,15 @@ The badge shows **remaining account allowance**, not a session’s token count o
 
 ## Beta feedback
 
-Report bugs and compatibility results through [GitHub Issues](https://github.com/Xentiles/NotchQ/issues/new/choose); the forms ask for the NotchQ version (shown in **About**, e.g. Bv0.3.0 build 8), macOS version, Mac processor and provider. Remove credentials, private conversations and personal paths from anything you share. See [CONTRIBUTING.md](CONTRIBUTING.md) for what helps most. Pull requests aren't accepted without prior agreement.
+Report bugs and compatibility results through [GitHub Issues](https://github.com/Xentiles/NotchQ/issues/new/choose); the forms ask for the NotchQ version (shown in **About**, e.g. Bv0.3.1 build 9), macOS version, Mac processor and provider. Remove credentials, private conversations and personal paths from anything you share. See [CONTRIBUTING.md](CONTRIBUTING.md) for what helps most. Pull requests aren't accepted without prior agreement.
+
+**Attach NotchQ's log** to make a report much easier to solve. In Terminal, run:
+
+```sh
+/usr/bin/log show --last 2h --style compact --predicate 'subsystem == "io.github.xentiles.NotchQ"'
+```
+
+Copy the output into your issue. It contains only NotchQ's version, macOS version, event and reason codes (for example `reason=signedOut`) and percentages. It never contains file paths, terminal text, tokens or account details. Type the full `/usr/bin/log`: in the default zsh shell, plain `log` is a different command.
 
 Security problems: report privately as described in [SECURITY.md](SECURITY.md). Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 

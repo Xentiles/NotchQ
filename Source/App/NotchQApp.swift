@@ -122,6 +122,13 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 _ = try? claudeConnection.notchQRepairExecutablePath(Bundle.main.executableURL!)
             }
             locator.notchQCaptureLoginPath { [weak self] in self?.notchQAppPresenceChanged() }
+            let info = Bundle.main.infoDictionary ?? [:], system = ProcessInfo.processInfo.operatingSystemVersion
+            #if arch(arm64)
+            let processor = "arm64"
+            #else
+            let processor = "x86_64"
+            #endif
+            NotchQDiagnostics.shared.record(.launched, detail: "Bv\(info["CFBundleShortVersionString"] as? String ?? "?") build=\(info["CFBundleVersion"] as? String ?? "?") macOS=\(system.majorVersion).\(system.minorVersion).\(system.patchVersion) arch=\(processor)")
             updater.onChange = { [weak self] in self?.settings?.notchQRefreshUpdates() }
             updater.notchQStart()
             #if NOTCHQ_TESTING
@@ -187,7 +194,7 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case .success(let snapshot): self.state.notchQRecordSuccess(snapshot)
             case .failure(let error): self.state.notchQRecordFailure(error.description, retryAfter: error.retryAfter)
             }
-            NotchQDiagnostics.shared.record(self.state.error == nil ? .succeeded : .failed, provider: .codex, remaining: self.state.snapshot?.displayWindow?.remaining, seconds: Date().timeIntervalSince(now))
+            NotchQDiagnostics.shared.record(self.state.error == nil ? .succeeded : .failed, provider: .codex, remaining: self.state.snapshot?.displayWindow?.remaining, seconds: Date().timeIntervalSince(now), reason: self.state.error.map(NotchQDiagnostics.notchQReason))
             self.notchQRenderBadge()
             if self.manualRefreshPending.contains(.codex) { self.state.notchQPrepareManualRefresh(); self.notchQPollUsage(only: [.codex]) }
             if self.showDiagnostic {
@@ -264,7 +271,7 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.claudeState.notchQRecordFailure(error.description, now: now)
                 self.claudeState.nextAllowed = max(self.claudeState.nextAllowed, now.addingTimeInterval(self.claudeCadence.interval))
             }
-            NotchQDiagnostics.shared.record(self.claudeState.error == nil ? .succeeded : .failed, provider: .claude, remaining: self.claudeState.snapshot?.displayWindow?.remaining, seconds: Date().timeIntervalSince(started))
+            NotchQDiagnostics.shared.record(self.claudeState.error == nil ? .succeeded : .failed, provider: .claude, remaining: self.claudeState.snapshot?.displayWindow?.remaining, seconds: Date().timeIntervalSince(started), reason: self.claudeState.error.map(NotchQDiagnostics.notchQReason))
             self.notchQRenderBadge()
             if self.manualRefreshPending.contains(.claude) { self.claudeState.notchQPrepareManualRefresh(); self.notchQPollUsage(only: [.claude]) }
         }
@@ -303,6 +310,7 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         else if showDiagnostic { next = [.codex] }
         else { next = notchQAvailableProviders() }
         guard next != providers else { return }
+        NotchQDiagnostics.shared.record(.detected, detail: "shown=" + (next.isEmpty ? "none" : next.map(\.rawValue).joined(separator: ",")))
         let hadCodex = providers.contains(.codex)
         let hadClaude = providers.contains(.claude)
         providers = next
@@ -432,18 +440,21 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         timer?.invalidate(); client.notchQStopClient(); claudeClient.notchQStop()
         state.error = "Mac asleep; waiting for a fresh reading."; claudeState.error = state.error
         notch?.notchQHideBadge(animated: false); notchQRenderBadge()
-        NotchQDiagnostics.shared.record(.sleeping)
+        NotchQDiagnostics.shared.record(.sleeping, reason: .systemSleep)
     }
     @objc func notchQDidWake() {
         sleeping = false; state.notchQPrepareManualRefresh(); claudeState.notchQPrepareManualRefresh()
         notchQRecoverDisplay(); notchQRefreshUsage(); notchQStartTimer()
     }
-    @objc func notchQPause() { if !sleeping { notchQWillSleep() } }
+    @objc func notchQPause() {
+        guard !sleeping else { return }
+        notchQWillSleep(); NotchQDiagnostics.shared.record(.paused, reason: sessionActive ? .displaySleep : .otherUser)
+    }
     /// Every wake-like signal lands here; repeated signals for one wake start a single refresh.
     @objc func notchQResume() {
         guard sessionActive, !shuttingDown else { return }
         if !testingLifecycle && !showDiagnostic { updater.notchQCheckIfDue() }
-        if sleeping { notchQDidWake() } else { notchQRecoverDisplay() }
+        if sleeping { NotchQDiagnostics.shared.record(.resumed, reason: .wake); notchQDidWake() } else { notchQRecoverDisplay() }
     }
     @objc func notchQSessionResigned() { sessionActive = false; notchQPause() }
     @objc func notchQSessionActivated() { sessionActive = true; notchQResume() }

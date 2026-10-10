@@ -128,3 +128,25 @@ func runNotchQUpdaterChecks() {
     precondition(NotchQUpdater.notchQInstallMain(["x"], relaunch: false) == 2, "malformed helper arguments rejected")
     print("Passed updater checks: versions, feed selection, signatures, staged-bundle validation, download/verify/unpack, manual fallback, install swap and rollback")
 }
+
+func runNotchQLogReasonChecks() {
+    // Every fixed failure message maps to a stable, shareable reason code.
+    let cases: [(String, NotchQDiagnostics.Reason)] = [
+        (NotchQSourceError.timeout.description, .timeout), (NotchQSourceError.disconnected.description, .disconnected),
+        (NotchQSourceError.exited.description, .exited), (NotchQSourceError.unavailable.description, .notFound),
+        ("Usage service throttled. Waiting before retrying.", .throttled),
+        ("Claude’s usage service is rate limiting checks. Next check in about 2 min.", .throttled),
+        ("Claude usage check timed out. Sign in to Claude Code; terminal output may be incompatible. Retrying automatically.", .timeout),
+        ("Sign in to Codex, then refresh.", .signedOut), ("Sign in to Claude Code with your Pro/Max account, then refresh.", .signedOut),
+        ("Claude Code is unavailable. Install it or open Claude Code in Claude Desktop, then sign in with Pro/Max.", .notFound),
+        ("Claude Code was not found. Install Claude Code and sign in with Pro/Max, or use Choose CLI…", .notFound),
+        ("Claude usage checker stopped after unexpected model activity. Restart NotchQ to retry.", .safetyStop),
+        ("Claude usage-check folder is not empty. Setup requires attention.", .incompatible),
+        ("Usage data unavailable for this account.", .notFound), ("Cannot fetch usage right now. Retrying automatically.", .rejected)]
+    for (message, reason) in cases { precondition(NotchQDiagnostics.notchQReason(for: message) == reason, "reason for: \(message)") }
+    let before = NotchQDiagnostics.shared.entries.count
+    NotchQDiagnostics.shared.record(.updateFailed, reason: .signature)
+    let entry = NotchQDiagnostics.shared.entries.last!
+    precondition(NotchQDiagnostics.shared.entries.count == min(before + 1, 128) && entry.event == .updateFailed && entry.reason == .signature, "events keep their reason")
+    print("Passed log reason checks: every fixed message maps to a shareable reason code")
+}
