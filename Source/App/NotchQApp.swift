@@ -23,10 +23,12 @@ func notchQPercentageTitle(_ percentage: String, color: NSColor = .labelColor) -
 final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let client = NotchQCodexClient()
     let claudeClient = NotchQClaudeUsageClient()
+    let updater = NotchQUpdater()
     var state = NotchQUsageState()
     var item: NSStatusItem!
     var timer: Timer?
     var sleeping = false
+    var sessionActive = true
     var loginError: String?
     #if NOTCHQ_TESTING
     var showDiagnostic = CommandLine.arguments.contains("--verify-live")
@@ -81,7 +83,7 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if !showDiagnostic && !testingLifecycle && NSRunningApplication.runningApplications(withBundleIdentifier: notchQApplicationIdentifier).contains(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
+        if !showDiagnostic && !testingLifecycle && NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? notchQApplicationIdentifier).contains(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
             NSApp.terminate(nil); return
         }
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -98,22 +100,41 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.state.notchQRecordFailure(NotchQSourceError.disconnected.description); self.notchQRenderBadge()
         }
         let center = NSWorkspace.shared.notificationCenter
+        // Pause for system sleep, display sleep and fast user switching. Any of the wake signals
+        // resumes, so one missed didWake notification cannot leave polling stopped until relaunch.
         center.addObserver(self, selector: #selector(notchQWillSleep), name: NSWorkspace.willSleepNotification, object: nil)
-        center.addObserver(self, selector: #selector(notchQDidWake), name: NSWorkspace.didWakeNotification, object: nil)
+        center.addObserver(self, selector: #selector(notchQPause), name: NSWorkspace.screensDidSleepNotification, object: nil)
+        center.addObserver(self, selector: #selector(notchQSessionResigned), name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
+        center.addObserver(self, selector: #selector(notchQResume), name: NSWorkspace.didWakeNotification, object: nil)
+        center.addObserver(self, selector: #selector(notchQResume), name: NSWorkspace.screensDidWakeNotification, object: nil)
+        center.addObserver(self, selector: #selector(notchQSessionActivated), name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
         center.addObserver(self, selector: #selector(notchQAppPresenceChanged), name: NSWorkspace.didLaunchApplicationNotification, object: nil)
         center.addObserver(self, selector: #selector(notchQAppPresenceChanged), name: NSWorkspace.didTerminateApplicationNotification, object: nil)
         center.addObserver(self, selector: #selector(notchQApplicationActivated(_:)), name: NSWorkspace.didActivateApplicationNotification, object: nil)
-        for name in [NSWorkspace.activeSpaceDidChangeNotification,
-                     NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
-            center.addObserver(self, selector: #selector(notchQRecoverDisplay), name: name, object: nil)
-        }
+        center.addObserver(self, selector: #selector(notchQRecoverDisplay), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
         claudeClient.onIdle = { [weak self] in
             guard let self = self, self.manualRefreshPending.contains(.claude), !self.sleeping, !self.shuttingDown else { return }
             self.notchQPollUsage(only: [.claude])
         }
         if !testingLifecycle && !showDiagnostic {
-            _ = try? claudeConnection.notchQRepairExecutablePath(Bundle.main.executableURL!)
+            // Only the release app may repoint the user's real Claude status line; never a test build.
+            if Bundle.main.bundleIdentifier == notchQApplicationIdentifier {
+                _ = try? claudeConnection.notchQRepairExecutablePath(Bundle.main.executableURL!)
+            }
             locator.notchQCaptureLoginPath { [weak self] in self?.notchQAppPresenceChanged() }
+            updater.onChange = { [weak self] in self?.settings?.notchQRefreshUpdates() }
+            updater.notchQStart()
+            #if NOTCHQ_TESTING
+            // End-to-end check: find, verify and install an update at launch, as if Update were clicked.
+            if CommandLine.arguments.contains("--update-now") {
+                updater.onChange = { [weak self] in
+                    guard let self = self else { return }
+                    if case .available = self.updater.phase { self.updater.notchQInstall() }
+                    if case .failed(let message) = self.updater.phase { print("update failed: \(message)"); fflush(stdout) }
+                }
+                updater.notchQCheck(userInitiated: true)
+            }
+            #endif
         }
         notchQUpdateProviderPresence(); notchQRenderBadge(); notchQPollUsage()
         notchQStartTimer()
@@ -251,7 +272,7 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func notchQShowSettings() {
         if settings == nil {
-            let controller = NotchQSettingsController(connection: claudeConnection)
+            let controller = NotchQSettingsController(connection: claudeConnection, updater: updater)
             controller.onChange = { [weak self] in
                 guard let self = self else { return }
                 self.requestGeneration += 1; self.manualRefreshPending.removeAll()
@@ -370,6 +391,7 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if notchQPercentageFont() == nil { notchQMenuInfo("Libron unavailable; using the system font") }
         if let loginError = loginError { notchQMenuInfo(loginError) }
         menu.addItem(.separator())
+        if let release = updater.available { _ = notchQMenuAction("Update available: \(release.version)…", #selector(notchQShowSettings)) }
         _ = notchQMenuAction("Settings…", #selector(notchQShowSettings))
         notchQMenuAction(manualRefreshPending.isEmpty ? "Refresh now" : "Refresh queued…", #selector(notchQRefreshUsage)).isEnabled = !sleeping && !providers.isEmpty && manualRefreshPending.isEmpty
         if providers.contains(.codex) { _ = notchQMenuAction("Open Codex", #selector(notchQOpenCodex)) }
@@ -416,6 +438,15 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         sleeping = false; state.notchQPrepareManualRefresh(); claudeState.notchQPrepareManualRefresh()
         notchQRecoverDisplay(); notchQRefreshUsage(); notchQStartTimer()
     }
+    @objc func notchQPause() { if !sleeping { notchQWillSleep() } }
+    /// Every wake-like signal lands here; repeated signals for one wake start a single refresh.
+    @objc func notchQResume() {
+        guard sessionActive, !shuttingDown else { return }
+        if !testingLifecycle && !showDiagnostic { updater.notchQCheckIfDue() }
+        if sleeping { notchQDidWake() } else { notchQRecoverDisplay() }
+    }
+    @objc func notchQSessionResigned() { sessionActive = false; notchQPause() }
+    @objc func notchQSessionActivated() { sessionActive = true; notchQResume() }
     @objc func notchQQuit() { NSApp.terminate(nil) }
     func applicationWillTerminate(_ notification: Notification) {
         shuttingDown = true; recoveryGeneration += 1; requestGeneration += 1; manualRefreshPending.removeAll()
@@ -432,6 +463,9 @@ struct NotchQApp {
     static func main() {
         NotchQPreferences.notchQPrepareDefaults()
         if CommandLine.arguments.contains("--claude-statusline") { exit(NotchQClaudeConnection.notchQStatusLineMain()) }
+        if let index = CommandLine.arguments.firstIndex(of: "--install-update") {
+            exit(NotchQUpdater.notchQInstallMain(Array(CommandLine.arguments.dropFirst(index + 1))))
+        }
         if CommandLine.arguments.contains("--enable-login-item") {
             do { try SMAppService.mainApp.register(); print("login status=\(SMAppService.mainApp.status.rawValue)"); exit(0) }
             catch { print("Login registration failed: \(error.localizedDescription)"); exit(1) }

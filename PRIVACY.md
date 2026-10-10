@@ -1,6 +1,6 @@
 # Privacy
 
-NotchQ is a local usage display. It has no analytics, advertising SDK or NotchQ account service.
+NotchQ is a local usage display. It has no analytics, advertising SDK or NotchQ account service. Its only own network request is the optional daily update check described below.
 
 ## Codex
 
@@ -51,6 +51,21 @@ install folders. Once per launch it also starts your login shell to read its
 when NotchQ starts from Finder. Only `PATH` is read; it is kept in memory and
 never stored, logged or sent anywhere. The tool folders are added to the `PATH`
 of the Codex and Claude Code processes NotchQ starts.
+
+## Update checks
+
+Shortly after launch and then once a day, NotchQ asks GitHub's public API for
+the list of NotchQ releases. The request carries only NotchQ's version in its
+User-Agent; no account, identifier or usage data is sent, and no cookies are
+kept. Turn off **Check for updates automatically** in Settings to stop these
+checks; **Check now** then runs one only when you click it.
+
+An update is installed only after you click **Update** in Settings. The
+download must carry a valid Ed25519 signature from the NotchQ maintainer's
+key, which is kept off GitHub, and must be the expected NotchQ version with an
+intact code signature. Otherwise it is discarded. Downloads and the previous
+version are kept temporarily in Application Support/NotchQ/Updates and removed
+after the new version has started.
 
 ## App visibility and settings
 

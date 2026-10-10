@@ -10,7 +10,7 @@ body:
     attributes:
       label: NotchQ version
       description: NotchQ Settings → About.
-      placeholder: Bv0.2.0 (build 7)
+      placeholder: Bv0.3.0 (build 8)
   - type: input
     id: mac
     attributes:

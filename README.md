@@ -5,9 +5,11 @@
 
 # NotchQ
 
-**Bv0.2.0 Beta** · [Download for Mac](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.2.0)
+**Bv0.3.0 Beta** · [Download for Mac](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.3.0)
 
 A small native Mac app that keeps your remaining AI allowance beside the camera notch. **NotchQ** combines *notch* and *quota*: **AI Notch Quota**.
+
+NotchQ is an independent project, not affiliated with OpenAI or Anthropic. Codex and Claude are their respective trademarks.
 
 **Unsigned beta:** this release is locally ad-hoc signed, without Developer ID signing or Apple notarization. macOS may block a downloaded copy. Source visibility and GitHub stars do not replace those checks. See [Apple's guidance](https://support.apple.com/en-us/102445). Signing can be added to a later release.
 
@@ -22,6 +24,14 @@ A small native Mac app that keeps your remaining AI allowance beside the camera 
 Step 4 is needed once per version because this beta is not notarized by Apple. Advanced users can instead clear the download flag in Terminal: `xattr -dr com.apple.quarantine /Applications/NotchQ.app`.
 
 No developer tools are needed to run the downloaded app. Open NotchQ again from Applications to reach Settings at any time.
+
+### Updates
+
+From Bv0.3.0, NotchQ updates itself. It checks GitHub for a newer release shortly after launch and then once a day. When one exists, **Settings → Updates** and the dropdown say so, and the **Update** button next to **Check now** turns blue; otherwise it stays greyed out. **Update** downloads the new version, checks its signature, quits NotchQ, replaces the app in place and reopens it. If anything fails, the current version stays. Updated copies don't need **Open Anyway** again.
+
+- Turn off **Check for updates automatically** in Settings to stop the daily check; **Check now** still works.
+- If NotchQ can't replace itself (for example, a standard macOS user in `/Applications`), it offers the download page instead.
+- Earlier versions (Bv0.2.0 and before) need one manual download of Bv0.3.0 or later.
 
 ### Codex and Claude detection
 
@@ -110,7 +120,7 @@ The badge shows **remaining account allowance**, not a session’s token count o
 
 ## Beta feedback
 
-Report bugs and compatibility results through [GitHub Issues](https://github.com/Xentiles/NotchQ/issues/new/choose); the forms ask for the NotchQ version (shown in **About**, e.g. Bv0.2.0 build 7), macOS version, Mac processor and provider. Remove credentials, private conversations and personal paths from anything you share. See [CONTRIBUTING.md](CONTRIBUTING.md) for what helps most. Pull requests aren't accepted without prior agreement.
+Report bugs and compatibility results through [GitHub Issues](https://github.com/Xentiles/NotchQ/issues/new/choose); the forms ask for the NotchQ version (shown in **About**, e.g. Bv0.3.0 build 8), macOS version, Mac processor and provider. Remove credentials, private conversations and personal paths from anything you share. See [CONTRIBUTING.md](CONTRIBUTING.md) for what helps most. Pull requests aren't accepted without prior agreement.
 
 Security problems: report privately as described in [SECURITY.md](SECURITY.md). Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 

@@ -19,7 +19,8 @@ func renderNotchQSettingsPreview(_ path: String) {
     let delegate = NotchQAppDelegate(claudeConnection: connection)
     delegate.providers = [.claude]
     delegate.notchQUpdateClaudeState()
-    let controller = NotchQSettingsController(connection: connection)
+    let updater = NotchQUpdater(directory: directory.appendingPathComponent("Updates"))
+    let controller = NotchQSettingsController(connection: connection, updater: updater)
     let view = controller.window.contentView!
     let output = URL(fileURLWithPath: path)
     let fixtures: [(String, NSAppearance.Name, String, String)] = [
@@ -55,4 +56,23 @@ func renderNotchQSettingsPreview(_ path: String) {
         try! bitmap.representation(using: .png, properties: [:])!.write(to: file)
         print("Native Settings preview rendered: \(name), \(Int(view.bounds.width))×\(Int(view.bounds.height))")
     }
+    // Update button: greyed out without an update, accent-blue when one is ready to install.
+    let release = NotchQRelease(version: NotchQVersion("9.9.9")!, page: URL(string: "https://github.com/Xentiles/NotchQ/releases")!, archive: URL(string: "https://example.com/a.zip")!, signature: URL(string: "https://example.com/a.zip.sig")!)
+    for (name, phase) in [("update-none", NotchQUpdater.Phase.upToDate), ("update-ready", NotchQUpdater.Phase.available(release))] {
+        updater.notchQPreview(phase); controller.notchQRefreshSettings()
+        let button = notchQFindButton(view, "Update")!
+        let ready = name == "update-ready"
+        precondition(button.isEnabled == ready && (button.keyEquivalent == "\r") == ready && (notchQFindButton(view, "Done")!.keyEquivalent == "\r") == !ready, "Update is greyed out, or the blue default button when ready: \(name)")
+        view.layoutSubtreeIfNeeded()
+        let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        try! bitmap.representation(using: .png, properties: [:])!.write(to: output.deletingPathExtension().appendingPathExtension(name + ".png"))
+        print("Native Settings preview rendered: \(name)")
+    }
+}
+
+func notchQFindButton(_ view: NSView, _ title: String) -> NSButton? {
+    if let button = view as? NSButton, button.title == title { return button }
+    for child in view.subviews { if let found = notchQFindButton(child, title) { return found } }
+    return nil
 }

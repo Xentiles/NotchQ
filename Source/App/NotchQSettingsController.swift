@@ -36,12 +36,19 @@ final class NotchQSettingsController: NSObject, NSWindowDelegate {
     private let claudeAutomatic = NSButton(title: "Use automatic", target: nil, action: nil)
     private let loginItems = NSButton(title: "Login Items…", target: nil, action: nil)
     private let refresh = NSButton(title: "Refresh", target: nil, action: nil)
+    let updater: NotchQUpdater?
+    private let updateStatus = NSTextField(wrappingLabelWithString: "")
+    private let autoUpdate = NSButton(checkboxWithTitle: "Check for updates automatically", target: nil, action: nil)
+    private let checkUpdates = NSButton(title: "Check now", target: nil, action: nil)
+    private let installUpdate = NSButton(title: "Update", target: nil, action: nil)
+    private let done = NSButton(title: "Done", target: nil, action: nil)
+    private let releaseNotes = NSButton(title: "What's new", target: nil, action: nil)
     private let stack = NSStackView()
     private let contentWidth: CGFloat = 560
     private let inset: CGFloat = 20
 
-    init(connection: NotchQClaudeConnection, locator: NotchQExecutableLocator = .shared) {
-        self.connection = connection; self.locator = locator
+    init(connection: NotchQClaudeConnection, locator: NotchQExecutableLocator = .shared, updater: NotchQUpdater? = nil) {
+        self.connection = connection; self.locator = locator; self.updater = updater
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 720), styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         super.init()
         window.title = "NotchQ Settings"
@@ -99,7 +106,18 @@ final class NotchQSettingsController: NSObject, NSWindowDelegate {
         notchQAdd(claudeHelp, to: claudeGroup)
         notchQAdd(claudeGroup)
         notchQAddDivider()
-        let done = notchQButton("Done", #selector(notchQDone)); done.keyEquivalent = "\r"
+        let updates = notchQGroup()
+        notchQAddSection("Updates", to: updates)
+        updateStatus.font = .systemFont(ofSize: 12); updateStatus.textColor = .secondaryLabelColor; notchQAdd(updateStatus, to: updates)
+        autoUpdate.target = self; autoUpdate.action = #selector(notchQToggleAutoUpdate); updates.addArrangedSubview(autoUpdate)
+        for (button, action) in [(checkUpdates, #selector(notchQCheckUpdates)), (installUpdate, #selector(notchQInstallUpdate)), (releaseNotes, #selector(notchQReleaseNotes))] {
+            button.target = self; button.action = action; button.bezelStyle = .rounded
+        }
+        // Update sits beside Check now: greyed out until an update is ready, then the blue default button.
+        updates.addArrangedSubview(notchQRow([checkUpdates, installUpdate, releaseNotes]))
+        notchQAdd(updates)
+        notchQAddDivider()
+        done.target = self; done.action = #selector(notchQDone); done.bezelStyle = .rounded; done.keyEquivalent = "\r"
         refresh.target = self; refresh.action = #selector(notchQRefresh); refresh.bezelStyle = .rounded
         let footer = notchQRow([refresh, notchQButton("About", #selector(notchQAbout)), notchQButton("Quit", #selector(notchQQuit))])
         let spacer = NSView(); spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -170,7 +188,7 @@ final class NotchQSettingsController: NSObject, NSWindowDelegate {
         disconnect.isEnabled = connection.isConnected; connect.isEnabled = !connection.isConnected
         disconnect.isHidden = !connection.isConnected; connect.isHidden = connection.isConnected
         refresh.title = refreshing ? "Refreshing…" : "Refresh"; refresh.isEnabled = canRefresh
-        notchQFitWindow()
+        notchQRefreshUpdates()
     }
     @objc private func notchQChangePreferences(_ sender: NSButton) {
         if sender === login {
@@ -214,6 +232,48 @@ final class NotchQSettingsController: NSObject, NSWindowDelegate {
     @objc private func notchQLoginSettings() { SMAppService.openSystemSettingsLoginItems() }
     @objc private func notchQDone() { window.orderOut(nil) }
     @objc private func notchQQuit() { onQuit?() }
+    func notchQRefreshUpdates() {
+        autoUpdate.state = NotchQPreferences.autoCheckUpdates ? .on : .off
+        guard let updater = updater else { installUpdate.isEnabled = false; installUpdate.keyEquivalent = ""; done.keyEquivalent = "\r"; notchQFitWindow(); return }
+        let version = updater.current.description
+        let checked = updater.lastChecked.map { " (checked \(DateFormatter.localizedString(from: $0, dateStyle: .none, timeStyle: .short)))" } ?? ""
+        var busy = false
+        switch updater.phase {
+        case .idle: updateStatus.stringValue = "NotchQ \(version)\(checked)."
+        case .checking: updateStatus.stringValue = "Checking for updates…"; busy = true
+        case .upToDate: updateStatus.stringValue = "NotchQ \(version) is up to date\(checked)."
+        case .available(let release): updateStatus.stringValue = "NotchQ \(release.version) is available. You have \(version)."
+        case .downloading(let percent): updateStatus.stringValue = "Downloading the update…" + (percent.map { " \($0)%" } ?? ""); busy = true
+        case .installing: updateStatus.stringValue = "Installing. NotchQ will reopen in a moment."; busy = true
+        case .manualOnly(_, let message), .failed(let message): updateStatus.stringValue = message
+        }
+        checkUpdates.isEnabled = !busy
+        let ready = updater.available != nil && !busy
+        installUpdate.isEnabled = ready
+        // The window's default button is the native blue one; hand that role to Update while it's ready.
+        installUpdate.keyEquivalent = ready ? "\r" : ""; done.keyEquivalent = ready ? "" : "\r"
+        installUpdate.title = { switch updater.phase {
+            case .manualOnly: return "Download Update…"
+            case .downloading, .installing: return "Updating…"
+            default: return "Update" } }()
+        installUpdate.toolTip = updater.available.map { release in
+            if case .manualOnly = updater.phase { return "Open the \(release.version) download page" }
+            return "Install \(release.version) and restart NotchQ" } ?? "No update available"
+        releaseNotes.isHidden = updater.available == nil
+        notchQFitWindow()
+    }
+    @objc private func notchQToggleAutoUpdate() {
+        NotchQPreferences.defaults.set(autoUpdate.state == .on, forKey: "autoCheckUpdates")
+        if autoUpdate.state == .on { updater?.notchQCheckIfDue() }
+        notchQRefreshUpdates()
+    }
+    @objc private func notchQCheckUpdates() { updater?.notchQCheck(userInitiated: true) }
+    @objc private func notchQInstallUpdate() {
+        guard let updater = updater, let release = updater.available else { return }
+        if case .manualOnly = updater.phase { NSWorkspace.shared.open(release.page); return }
+        updater.notchQInstall()
+    }
+    @objc private func notchQReleaseNotes() { if let page = updater?.available?.page { NSWorkspace.shared.open(page) } }
     @objc private func notchQAbout() {
         let alert = NSAlert(); alert.messageText = "NotchQ — AI quota meter"
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String

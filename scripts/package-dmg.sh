@@ -19,6 +19,7 @@ NOTCHQ_MINOS=$(vtool -show-build "$NOTCHQ_BINARY" | awk '$1 == "minos" { print $
 [[ "$NOTCHQ_MINOS" == "13.0" ]] || NOTCHQ_FAIL "minimum macOS is '$NOTCHQ_MINOS', expected 13.0"
 [[ $(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$NOTCHQ_PLIST") == "13.0" ]] || NOTCHQ_FAIL "Info.plist minimum macOS mismatch"
 codesign --verify --strict --deep "$NOTCHQ_APP" || NOTCHQ_FAIL "code signature invalid"
+/usr/libexec/PlistBuddy -c 'Print :NotchQUpdatePublicKey' "$NOTCHQ_PLIST" >/dev/null 2>&1 || NOTCHQ_FAIL "Info.plist has no NotchQUpdatePublicKey"
 for NOTCHQ_RESOURCE in Libron-Regular.ttf Libron-LICENSE.txt NotchQ.icns; do
   [[ -f "$NOTCHQ_APP/Contents/Resources/$NOTCHQ_RESOURCE" ]] || NOTCHQ_FAIL "missing resource $NOTCHQ_RESOURCE"
 done
@@ -104,3 +105,15 @@ rm -f "$NOTCHQ_WORKING"
 hdiutil verify "$NOTCHQ_IMAGE"
 (cd "$NOTCHQ_ROOT/releases" && shasum -a 256 "${NOTCHQ_IMAGE:t}" > "${NOTCHQ_IMAGE:t}.sha256")
 echo "Created $NOTCHQ_IMAGE"
+
+# In-app update archive: the same app, zipped and signed with the Keychain key (scripts/update-key.sh).
+NOTCHQ_ZIP="$NOTCHQ_ROOT/releases/NotchQ-Bv$NOTCHQ_VERSION.zip"
+rm -f "$NOTCHQ_ZIP" "$NOTCHQ_ZIP.sig"
+ditto -c -k --keepParent "$NOTCHQ_APP" "$NOTCHQ_ZIP"
+if security find-generic-password -a NotchQ -s "NotchQ update signing" >/dev/null 2>&1; then
+  zsh "$NOTCHQ_ROOT/scripts/update-key.sh" sign "$NOTCHQ_ZIP" >/dev/null
+  zsh "$NOTCHQ_ROOT/scripts/update-key.sh" verify "$NOTCHQ_ZIP"
+  echo "Created ${NOTCHQ_ZIP:t} and its signature"
+else
+  echo "warning: no update signing key in the Keychain; ${NOTCHQ_ZIP:t} is unsigned and can't be offered in-app" >&2
+fi

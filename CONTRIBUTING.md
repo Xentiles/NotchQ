@@ -16,7 +16,7 @@ NotchQ's source is shared for transparency under an **all-rights-reserved licens
 
 ## A good bug report
 
-- **NotchQ version:** open NotchQ Settings → **About** (for example *Bv0.2.0 (build 7)*).
+- **NotchQ version:** open NotchQ Settings → **About** (for example *Bv0.3.0 (build 8)*).
 - **macOS version** and **Mac model / chip** (Apple silicon or Intel).
 - **Provider:** Codex, Claude or both, and how it's installed (desktop app, Homebrew, npm, nvm…). The grey **Found automatically / Not found** line under each provider in Settings helps.
 - **What happened and what you expected**, with steps to reproduce.

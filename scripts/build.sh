@@ -23,7 +23,7 @@ for NOTCHQ_ARCH in $NOTCHQ_ARCHITECTURES; do
   NOTCHQ_BINARY="$NOTCHQ_ROOT/work/build/NotchQ-$NOTCHQ_MODE-$NOTCHQ_ARCH"
   xcrun swiftc -swift-version 5 -parse-as-library -O -target "$NOTCHQ_ARCH-apple-macos13.0" \
     -module-cache-path "$NOTCHQ_ROOT/work/module-cache" "${NOTCHQ_FLAGS[@]}" "${NOTCHQ_SOURCES[@]}" \
-    -framework AppKit -framework ServiceManagement -framework CoreText -framework QuartzCore -o "$NOTCHQ_BINARY"
+    -framework AppKit -framework ServiceManagement -framework CoreText -framework QuartzCore -framework CryptoKit -o "$NOTCHQ_BINARY"
   NOTCHQ_BINARIES+=("$NOTCHQ_BINARY")
 done
 if (( ${#NOTCHQ_BINARIES} > 1 )); then

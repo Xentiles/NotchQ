@@ -10,6 +10,7 @@ enum NotchQPreferences {
     static var codexEnabled: Bool { defaults.bool(forKey: "codexEnabled") }
     static var claudeEnabled: Bool { defaults.bool(forKey: "claudeEnabled") }
     static var onlyRunningApps: Bool { defaults.bool(forKey: "onlyRunningApps") }
+    static var autoCheckUpdates: Bool { defaults.bool(forKey: "autoCheckUpdates") }
     static var preferNotch: Bool { defaults.bool(forKey: "preferNotchPosition") }
     static func chosenCLIKey(_ provider: NotchQProvider) -> String { provider == .codex ? "codexCLIPath" : "claudeCLIPath" }
     static func chosenCLI(_ provider: NotchQProvider) -> String? { defaults.string(forKey: chosenCLIKey(provider)) }
@@ -24,6 +25,6 @@ enum NotchQPreferences {
             }
             defaults.set(true, forKey: "didMigrateLegacyPreferences")
         }
-        defaults.register(defaults: ["preferNotchPosition": true, "codexEnabled": true, "claudeEnabled": true, "onlyRunningApps": false])
+        defaults.register(defaults: ["preferNotchPosition": true, "codexEnabled": true, "claudeEnabled": true, "onlyRunningApps": false, "autoCheckUpdates": true])
     }
 }

@@ -119,6 +119,7 @@ func runNotchQChecks() {
     runNotchQUsageMenuChecks()
     runNotchQClaudeChecks()
     runNotchQDetectionChecks()
+    runNotchQUpdaterChecks()
 }
 
 func runNotchQTransportChecks(_ server: URL) {
@@ -204,6 +205,22 @@ func runNotchQLifecycleChecks(_ server: URL) {
     delegate.notchQDidWake(); notchQSettle()
     precondition(!delegate.sleeping && delegate.timer?.isValid == true && delegate.state.percentage == "53%")
     precondition(delegate.client.processIdentifier != previousPID, "wake reconnects")
+    // Display sleep pauses; a wake reported only as screensDidWake still resumes (missed didWake).
+    func notchQCodexRequests() -> Int { NotchQDiagnostics.shared.entries.filter { $0.event == .requestStarted && $0.provider == .codex }.count }
+    delegate.notchQPause()
+    precondition(delegate.sleeping && delegate.timer?.isValid == false && delegate.client.processIdentifier == nil, "display sleep pauses polling")
+    delegate.notchQPause()
+    precondition(delegate.sleeping, "repeated sleep signals are harmless")
+    let beforeWake = notchQCodexRequests()
+    delegate.notchQResume(); delegate.notchQResume(); notchQSettle()
+    precondition(!delegate.sleeping && delegate.timer?.isValid == true && delegate.state.percentage == "53%", "a screen wake alone resumes polling")
+    precondition(notchQCodexRequests() - beforeWake == 1, "duplicate wake signals start exactly one refresh")
+    delegate.notchQSessionResigned()
+    precondition(delegate.sleeping && delegate.client.processIdentifier == nil, "switching to another user pauses")
+    delegate.notchQResume()
+    precondition(delegate.sleeping, "a screen wake in another user's session does not resume")
+    delegate.notchQSessionActivated(); notchQSettle()
+    precondition(!delegate.sleeping && delegate.timer?.isValid == true && delegate.state.percentage == "53%", "returning to this session resumes")
     let initialRecovery = delegate.recoveryGeneration
     delegate.notchQRecoverDisplay()
     precondition(delegate.recoveryGeneration == initialRecovery + 1)
