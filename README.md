@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="Assets/Demo/notchq-ad-v2-1280.gif" width="1280" alt="NotchQ demo: remaining Codex (white) and Claude (orange) allowance beside the MacBook notch, the dropdown with each provider's allowance windows and reset times, then the NotchQ Settings window">
+  <img src="Assets/Demo/notchq-ad-v5-1280.gif" width="1280" alt="NotchQ demo: remaining Codex (white) and Claude (orange) allowance beside the MacBook notch, the dropdown with each provider's allowance, reset times and next check, then the NotchQ Settings window with usage sources and updates">
 </p>
 <p align="center"><em>A simple way of knowing what's left. Demo readings are illustrative.</em></p>
 
 # NotchQ
 
-**Bv0.3.3 Beta** · [Download for Mac](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.3.3)
+**Bv0.3.4 Beta** · [Download for Mac](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.3.4)
 
 A small native Mac app that keeps your remaining AI allowance beside the camera notch. **NotchQ** combines *notch* and *quota*: **AI Notch Quota**.
 
@@ -127,9 +127,9 @@ The badge shows **remaining account allowance**, not a session’s token count o
 
 ## Beta feedback
 
-Report bugs and compatibility results through [GitHub Issues](https://github.com/Xentiles/NotchQ/issues/new/choose); the forms ask for the NotchQ version (shown in **About**, e.g. Bv0.3.3 build 11), macOS version, Mac processor and provider. Remove credentials, private conversations and personal paths from anything you share. See [CONTRIBUTING.md](CONTRIBUTING.md) for what helps most. Pull requests aren't accepted without prior agreement.
+Report bugs and compatibility results through [GitHub Issues](https://github.com/Xentiles/NotchQ/issues/new/choose); the forms ask for the NotchQ version (shown in **About**, e.g. Bv0.3.4 build 12), macOS version, Mac processor and provider. Remove credentials, private conversations and personal paths from anything you share. See [CONTRIBUTING.md](CONTRIBUTING.md) for what helps most. Pull requests aren't accepted without prior agreement.
 
-The quickest way is **Report a Bug…**, in NotchQ's dropdown or at the bottom of Settings. It copies NotchQ's log to your clipboard and opens the bug form with your NotchQ version, macOS version and processor filled in; paste the log into the "NotchQ log" field.
+The quickest way is **Report a Bug…**, in NotchQ's dropdown or at the bottom of Settings. It opens the bug form with your NotchQ version, macOS version, processor and recent log already filled in, and copies the full log to your clipboard in case the form's copy had to be shortened.
 
 **Attach NotchQ's log** to make a report much easier to solve. To copy it yourself instead, run this in Terminal:
 

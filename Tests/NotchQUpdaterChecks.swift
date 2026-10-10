@@ -162,6 +162,17 @@ func runNotchQBugReportChecks() {
     environment.isAppleSilicon = false
     precondition(notchQQuery(NotchQBugReport.notchQFormURL(environment))["chip"] == "Intel", "Intel Macs prefill Intel")
     precondition(NotchQBugReport.notchQFormURL(environment).absoluteString.hasPrefix("https://github.com/Xentiles/NotchQ/issues/new?"), "opens the NotchQ bug form")
+    // The log field is filled in too: compacted, newest entries first, and the link stays under GitHub's limit.
+    precondition(NotchQBugReport.notchQCompact("2026-10-10 17:28:16.123 E  NotchQ[87252:1a2b] [io.github.xentiles.NotchQ:codex] event=failed provider=codex reason=throttled") == "17:28:16 E event=failed provider=codex reason=throttled", "error lines keep time and E marker")
+    precondition(NotchQBugReport.notchQCompact("2026-10-10 17:29:25.004 Df NotchQ[87252:1a2b] [io.github.xentiles.NotchQ:codex] event=succeeded provider=codex") == "17:29:25 event=succeeded provider=codex", "other lines keep time and event")
+    let shortLog = "NotchQ summary\n2026-10-10 17:00:00.000 Df NotchQ[1:2] [x:y] event=launched provider=app"
+    let shortURL = NotchQBugReport.notchQFormURL(environment, log: shortLog)
+    precondition(notchQQuery(shortURL)["log"] == "NotchQ summary\n17:00:00 event=launched provider=app", "a short log is filled in whole")
+    let longLog = (["NotchQ summary"] + (0..<600).map { String(format: "2026-10-10 12:%02d:%02d.000 Df NotchQ[1:2] [x:claude] event=succeeded provider=claude remaining=%d%%", $0 / 60, $0 % 60, $0 % 100) }).joined(separator: "\n")
+    let longURL = NotchQBugReport.notchQFormURL(environment, log: longLog)
+    let excerpt = notchQQuery(longURL)["log"]!
+    precondition(longURL.absoluteString.count <= NotchQBugReport.linkBudget, "link stays under GitHub's limit: \(longURL.absoluteString.count)")
+    precondition(excerpt.hasPrefix("NotchQ summary\n(latest ") && excerpt.contains("of 600 entries; the full log is on your clipboard)") && excerpt.hasSuffix("remaining=99%") && !excerpt.contains("12:00:00 "), "long logs keep the summary, a note and the newest entries")
     // The copied log starts with a summary and only contains NotchQ's own event lines.
     NotchQDiagnostics.shared.record(.updateChecked, reason: .upToDate, detail: "bug-report-check")
     let log = NotchQBugReport.notchQCollectLog(environment: environment)

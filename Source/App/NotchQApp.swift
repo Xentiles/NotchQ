@@ -466,10 +466,10 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async {
                 NSPasteboard.general.clearContents(); NSPasteboard.general.setString(log, forType: .string)
                 if #available(macOS 14, *) { NSApp.activate() } else { NSApp.activate(ignoringOtherApps: true) }
-                let alert = NSAlert(); alert.messageText = "NotchQ's log is copied"
-                alert.informativeText = "Your browser will open GitHub's bug form with your NotchQ and macOS versions filled in. Paste the log (⌘V) into the “NotchQ log” field and describe what happened.\n\nThe log has no file paths, tokens or account details. Filing an issue needs a GitHub account."
+                let alert = NSAlert(); alert.messageText = "Report a bug"
+                alert.informativeText = "Your browser will open GitHub's bug form with your NotchQ version, macOS version, processor and recent log already filled in. Describe what happened and submit. If the log field says it was shortened, the full log is on your clipboard: select the field's text and paste (⌘V).\n\nThe log has no file paths, tokens or account details. Filing an issue needs a GitHub account."
                 alert.addButton(withTitle: "Open Bug Form"); alert.addButton(withTitle: "Cancel")
-                if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(NotchQBugReport.notchQFormURL()) }
+                if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(NotchQBugReport.notchQFormURL(log: log)) }
             }
         }
     }

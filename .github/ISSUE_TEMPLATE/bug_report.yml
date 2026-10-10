@@ -12,7 +12,7 @@ body:
     attributes:
       label: NotchQ version
       description: NotchQ Settings → About.
-      placeholder: Bv0.3.3 (build 11)
+      placeholder: Bv0.3.4 (build 12)
     validations:
       required: true
   - type: input
@@ -22,14 +22,12 @@ body:
       placeholder: macOS 15.6
     validations:
       required: true
-  - type: dropdown
+  - type: input
     id: chip
     attributes:
       label: Mac processor
-      options:
-        - Apple silicon (M-series)
-        - Intel
-        - Not sure
+      description: Apple silicon (M-series) or Intel. NotchQ's Report a Bug fills this in.
+      placeholder: Apple silicon (M-series)
     validations:
       required: true
   - type: dropdown
