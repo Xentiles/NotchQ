@@ -19,6 +19,7 @@ final class NotchQSettingsController: NSObject, NSWindowDelegate {
     var onOpenCodex: (() -> Void)?
     var onOpenClaude: (() -> Void)?
     var onQuit: (() -> Void)?
+    var onReportBug: (() -> Void)?
     private let notch = NSButton(checkboxWithTitle: "Place beside the notch", target: nil, action: nil)
     private let running = NSButton(checkboxWithTitle: "Show only running desktop apps", target: nil, action: nil)
     private let login = NSButton(checkboxWithTitle: "Start at login", target: nil, action: nil)
@@ -124,7 +125,7 @@ final class NotchQSettingsController: NSObject, NSWindowDelegate {
         notchQAddDivider()
         done.target = self; done.action = #selector(notchQDone); done.bezelStyle = .rounded; done.keyEquivalent = "\r"
         refresh.target = self; refresh.action = #selector(notchQRefresh); refresh.bezelStyle = .rounded
-        let footer = notchQRow([refresh, notchQButton("About", #selector(notchQAbout)), notchQButton("Quit", #selector(notchQQuit))])
+        let footer = notchQRow([refresh, notchQButton("About", #selector(notchQAbout)), notchQButton("Report a Bug…", #selector(notchQReportBug)), notchQButton("Quit", #selector(notchQQuit))])
         let spacer = NSView(); spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         footer.addArrangedSubview(spacer); footer.addArrangedSubview(done)
         notchQAdd(footer)
@@ -237,6 +238,7 @@ final class NotchQSettingsController: NSObject, NSWindowDelegate {
     @objc private func notchQLoginSettings() { SMAppService.openSystemSettingsLoginItems() }
     @objc private func notchQDone() { window.orderOut(nil) }
     @objc private func notchQQuit() { onQuit?() }
+    @objc private func notchQReportBug() { onReportBug?() }
     func notchQRefreshUpdates() {
         autoUpdate.state = NotchQPreferences.autoCheckUpdates ? .on : .off
         guard let updater = updater else { installUpdate.isEnabled = false; installUpdate.keyEquivalent = ""; done.keyEquivalent = "\r"; notchQFitWindow(); return }

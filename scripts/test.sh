@@ -18,3 +18,8 @@ if /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null; then
   /usr/bin/arch -x86_64 "$NOTCHQ_TEST" --self-test
   env -i HOME="$HOME" USER="$USER" PATH=/usr/bin:/bin:/usr/sbin:/sbin /usr/bin/arch -x86_64 "$NOTCHQ_TEST" --detection-report
 fi
+# "Report a Bug…" prefills these issue-form field ids and options; keep them in sync.
+for NOTCHQ_FIELD in "id: version" "id: macos" "id: chip" "Apple silicon (M-series)" "- Intel"; do
+  grep -q -- "$NOTCHQ_FIELD" "$NOTCHQ_ROOT/.github/ISSUE_TEMPLATE/bug_report.yml" || { echo "bug_report.yml is missing: $NOTCHQ_FIELD" >&2; exit 1; }
+done
+echo "Passed bug-form field checks"

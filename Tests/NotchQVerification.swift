@@ -132,6 +132,7 @@ func runNotchQChecks() {
     runNotchQDetectionChecks()
     runNotchQUpdaterChecks()
     runNotchQLogReasonChecks()
+    runNotchQBugReportChecks()
 }
 
 func runNotchQTransportChecks(_ server: URL) {
@@ -195,6 +196,11 @@ func runNotchQLifecycleChecks(_ server: URL) {
     defer { try? FileManager.default.removeItem(at: mode) }
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("notchq-lifecycle-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
+    // Start from known settings (both sources on, no desktop filter) and restore the test domain afterwards.
+    let defaults = NotchQPreferences.defaults, domain = Bundle.main.bundleIdentifier!
+    let savedDefaults = defaults.persistentDomain(forName: domain)
+    defer { if let saved = savedDefaults { defaults.setPersistentDomain(saved, forName: domain) } else { defaults.removePersistentDomain(forName: domain) } }
+    defaults.set(true, forKey: "codexEnabled"); defaults.set(true, forKey: "claudeEnabled"); defaults.set(false, forKey: "onlyRunningApps")
     let connection = NotchQClaudeConnection(directory: directory, configuration: directory.appendingPathComponent("settings.json"))
     let delegate = NotchQAppDelegate(claudeConnection: connection)
     delegate.testingLifecycle = true
@@ -262,7 +268,18 @@ func runNotchQLifecycleChecks(_ server: URL) {
     precondition(delegate.client.processIdentifier == nil, "no Codex polling when its app is closed")
     precondition(delegate.notch?.button.attributedTitle.string == "—%" && (delegate.item.isVisible || delegate.notch?.currentFrame != nil), "failing-only provider keeps the badge and menu reachable")
     delegate.testPresence = []; delegate.notchQUpdateProviderPresence()
-    precondition(!delegate.item.isVisible && delegate.notch?.currentFrame == nil, "neither provider hides all UI")
+    precondition(!delegate.item.isVisible && delegate.notch?.currentFrame == nil, "installed sources hidden by the running-apps filter stay hidden")
+    // Nothing installed at all: a neutral menu-bar item keeps NotchQ reachable.
+    let installedLocator = delegate.locator
+    delegate.locator = NotchQExecutableLocator(home: directory.appendingPathComponent("no-tools"), systemDirectories: [], applicationDirectories: [], applicationURL: { _ in nil }, chosenPath: { _ in nil })
+    delegate.notchQRenderBadge()
+    precondition(delegate.showsPlaceholder && delegate.item.isVisible && delegate.item.button?.image != nil && delegate.notch?.currentFrame == nil, "nothing found shows a neutral menu-bar item")
+    delegate.menuWillOpen(delegate.item.menu!)
+    let emptyTitles = delegate.item.menu!.items.map(\.title)
+    precondition(emptyTitles.contains("No usage source to show") && emptyTitles.contains("Settings…") && emptyTitles.contains("Report a Bug…"), "its dropdown explains and offers Settings and bug reporting")
+    delegate.menuDidClose(delegate.item.menu!)
+    delegate.locator = installedLocator; delegate.notchQRenderBadge()
+    precondition(!delegate.showsPlaceholder && delegate.item.button?.image == nil, "placeholder goes away once a source is found")
     delegate.testPresence = [.codex]; delegate.notchQUpdateProviderPresence()
     precondition(delegate.state.percentage == "—%", "reopened provider waits for fresh data")
     delegate.notchQRefreshUsage(); notchQSettle()

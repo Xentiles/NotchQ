@@ -58,6 +58,13 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Every enabled, detected source stays visible; a failed or missing reading shows "—%",
     // so the badge and its menu remain reachable to explain the problem.
     var displayedProviders: [NotchQProvider] { providers }
+    /// Nothing to show because no enabled source is installed (or both are switched off): keep a small
+    /// neutral menu-bar item so NotchQ stays reachable. Sources hidden only by the running-apps filter stay hidden.
+    var showsPlaceholder: Bool {
+        guard displayedProviders.isEmpty else { return false }
+        let enabled = NotchQProvider.allCases.filter { $0 == .codex ? NotchQPreferences.codexEnabled : NotchQPreferences.claudeEnabled }
+        return enabled.allSatisfy { locator.notchQLocate($0) == nil && !($0 == .claude && claudeConnection.isConnected) }
+    }
 
     init(claudeConnection: NotchQClaudeConnection = NotchQClaudeConnection()) {
         self.claudeConnection = claudeConnection
@@ -218,10 +225,19 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let window = reading.snapshot?.displayWindow else { return "\(provider.displayName) usage unavailable; awaiting a fresh reading" }
             return "\(provider.displayName) \(window.label) \(reading.percentage) remaining"
         }.joined(separator: "; ")
-        item.button?.attributedTitle = notchQProviderTitle(displayed, codex: state.percentage, claude: claudeState.percentage, onBlack: false)
-        item.button?.toolTip = names
-        item.button?.setAccessibilityLabel("AI usage remaining")
-        item.button?.setAccessibilityValue(names)
+        if showsPlaceholder {
+            let image = NSImage(systemSymbolName: "gauge.medium", accessibilityDescription: "NotchQ") ?? NSImage(systemSymbolName: "gauge", accessibilityDescription: "NotchQ")
+            image?.isTemplate = true
+            item.button?.image = image; item.button?.attributedTitle = NSAttributedString(string: image == nil ? "NotchQ" : "")
+            item.button?.toolTip = "NotchQ: no Codex or Claude usage source found. Click for details."
+            item.button?.setAccessibilityLabel("NotchQ"); item.button?.setAccessibilityValue("No usage source found")
+        } else {
+            item.button?.image = nil
+            item.button?.attributedTitle = notchQProviderTitle(displayed, codex: state.percentage, claude: claudeState.percentage, onBlack: false)
+            item.button?.toolTip = names
+            item.button?.setAccessibilityLabel("AI usage remaining")
+            item.button?.setAccessibilityValue(names)
+        }
         notch?.notchQUpdateBadge(title: notchQProviderTitle(displayed, codex: state.percentage, claude: claudeState.percentage), indicatorCount: displayed.count, tooltip: names)
         notchQRepositionBadge()
         settings?.notchQRefreshSettings(codexMessage: notchQProviderStatusMessage(.codex), claudeMessage: notchQProviderStatusMessage(.claude), refreshing: !manualRefreshPending.isEmpty || client.busy || claudeClient.busy, canRefresh: !sleeping && !providers.isEmpty && manualRefreshPending.isEmpty)
@@ -304,6 +320,7 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             controller.onOpenCodex = { [weak self] in self?.notchQOpenCodex() }
             controller.onOpenClaude = { [weak self] in self?.notchQOpenClaude() }
             controller.onQuit = { NSApp.terminate(nil) }
+            controller.onReportBug = { [weak self] in self?.notchQReportBug() }
             settings = controller
         }
         settings?.notchQShowSettings()
@@ -359,7 +376,11 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     func notchQRepositionBadge(recovering: Bool = false) {
         if menuTracking && !sleeping { displayRecoveryPending = true; return }
-        if sleeping || displayedProviders.isEmpty { notch?.notchQHideBadge(animated: !sleeping && !testingLifecycle); item.isVisible = false; NotchQDiagnostics.shared.record(.hidden); return }
+        if sleeping || displayedProviders.isEmpty {
+            notch?.notchQHideBadge(animated: !sleeping && !testingLifecycle)
+            item.isVisible = !sleeping && showsPlaceholder
+            NotchQDiagnostics.shared.record(item.isVisible ? .menuBar : .hidden); return
+        }
         let placed = preferNotch && (notch?.notchQPositionBadge(show: !testingLifecycle, animated: !testingLifecycle && !recovering, reassert: recovering) ?? false)
         if !placed { notch?.notchQHideBadge(animated: false) }
         item.isVisible = !placed
@@ -405,11 +426,18 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let rows = notchQUsageMenuRows(claudeState)
             (rows.isEmpty ? ["Claude usage unavailable"] : rows).forEach(notchQMenuInfo)
         }
+        if providers.isEmpty {
+            notchQMenuInfo("No usage source to show")
+            let enabled = NotchQProvider.allCases.filter { $0 == .codex ? NotchQPreferences.codexEnabled : NotchQPreferences.claudeEnabled }
+            if enabled.isEmpty { notchQMenuInfo("Codex and Claude are both switched off in Settings.") }
+            enabled.forEach { notchQMenuInfo(notchQProviderStatusMessage($0)) }
+        }
         if notchQPercentageFont() == nil { notchQMenuInfo("Libron unavailable; using the system font") }
         if let loginError = loginError { notchQMenuInfo(loginError) }
         menu.addItem(.separator())
         if let release = updater.available { _ = notchQMenuAction("Update available: \(release.version)…", #selector(notchQShowSettings)) }
         _ = notchQMenuAction("Settings…", #selector(notchQShowSettings))
+        _ = notchQMenuAction("Report a Bug…", #selector(notchQReportBug))
         notchQMenuAction(manualRefreshPending.isEmpty ? "Refresh now" : "Refresh queued…", #selector(notchQRefreshUsage)).isEnabled = !sleeping && !providers.isEmpty && manualRefreshPending.isEmpty
         if providers.contains(.codex) { _ = notchQMenuAction("Open Codex", #selector(notchQOpenCodex)) }
         if providers.contains(.claude) { _ = notchQMenuAction("Open Claude", #selector(notchQOpenClaude)) }
@@ -431,6 +459,20 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
     }
     @objc func notchQOpenLoginSettings() { SMAppService.openSystemSettingsLoginItems() }
+    /// Copies NotchQ's log (fixed codes only) to the clipboard, then opens the prefilled GitHub bug form.
+    @objc func notchQReportBug() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let log = NotchQBugReport.notchQCollectLog()
+            DispatchQueue.main.async {
+                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(log, forType: .string)
+                if #available(macOS 14, *) { NSApp.activate() } else { NSApp.activate(ignoringOtherApps: true) }
+                let alert = NSAlert(); alert.messageText = "NotchQ's log is copied"
+                alert.informativeText = "Your browser will open GitHub's bug form with your NotchQ and macOS versions filled in. Paste the log (⌘V) into the “NotchQ log” field and describe what happened.\n\nThe log has no file paths, tokens or account details. Filing an issue needs a GitHub account."
+                alert.addButton(withTitle: "Open Bug Form"); alert.addButton(withTitle: "Cancel")
+                if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(NotchQBugReport.notchQFormURL()) }
+            }
+        }
+    }
     @objc func notchQOpenClaude() {
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: NotchQProvider.claude.bundleIdentifier) {
             NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())

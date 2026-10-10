@@ -150,3 +150,22 @@ func runNotchQLogReasonChecks() {
     precondition(NotchQDiagnostics.shared.entries.count == min(before + 1, 128) && entry.event == .updateFailed && entry.reason == .signature, "events keep their reason")
     print("Passed log reason checks: every fixed message maps to a shareable reason code")
 }
+
+func runNotchQBugReportChecks() {
+    // The prefilled GitHub form link carries only versions and processor type.
+    var environment = NotchQBugReport.Environment(); environment.version = "0.3.3"; environment.build = "11"; environment.macOS = "macOS 26.6.2"; environment.isAppleSilicon = true
+    func notchQQuery(_ url: URL) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: (URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+    }
+    let silicon = notchQQuery(NotchQBugReport.notchQFormURL(environment))
+    precondition(silicon == ["template": "bug_report.yml", "version": "Bv0.3.3 (build 11)", "macos": "macOS 26.6.2", "chip": "Apple silicon (M-series)"], "bug form prefill: \(silicon)")
+    environment.isAppleSilicon = false
+    precondition(notchQQuery(NotchQBugReport.notchQFormURL(environment))["chip"] == "Intel", "Intel Macs prefill Intel")
+    precondition(NotchQBugReport.notchQFormURL(environment).absoluteString.hasPrefix("https://github.com/Xentiles/NotchQ/issues/new?"), "opens the NotchQ bug form")
+    // The copied log starts with a summary and only contains NotchQ's own event lines.
+    NotchQDiagnostics.shared.record(.updateChecked, reason: .upToDate, detail: "bug-report-check")
+    let log = NotchQBugReport.notchQCollectLog(environment: environment)
+    let lines = log.split(separator: "\n")
+    precondition(lines.first == "NotchQ Bv0.3.3 (build 11) · macOS 26.6.2 · Intel" && lines.dropFirst().allSatisfy { $0.contains("event=") || $0.hasPrefix("No NotchQ log entries") }, "log has a summary line and NotchQ events only")
+    print("Passed bug-report checks: prefilled form link, log summary and filtering")
+}

@@ -5,7 +5,7 @@
 
 # NotchQ
 
-**Bv0.3.2 Beta** · [Download for Mac](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.3.2)
+**Bv0.3.3 Beta** · [Download for Mac](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.3.3)
 
 A small native Mac app that keeps your remaining AI allowance beside the camera notch. **NotchQ** combines *notch* and *quota*: **AI Notch Quota**.
 
@@ -115,7 +115,7 @@ If you added the optional Claude status-line fallback, click **Remove fallback**
 
 ## No percentage appears
 
-A wide notch does not prevent a reading from being received. If there is no usable notch area, NotchQ falls back to the standard menu bar. A detected source shows **—%** when no current reading is available; open the dropdown for the reason. Disabled or undetected sources stay hidden.
+A wide notch does not prevent a reading from being received. If there is no usable notch area, NotchQ falls back to the standard menu bar. A detected source shows **—%** when no current reading is available; open the dropdown for the reason. Disabled or undetected sources stay hidden. If NotchQ finds neither Codex nor Claude Code (or both are switched off), a small gauge icon stays in the menu bar; click it to see what's missing and to open Settings.
 
 1. Enable the provider’s checkbox. A disabled Codex source does not poll usage.
 2. Check the path line under the provider in Settings. If it says **Not found**, install the tool or use **Choose CLI…**.
@@ -127,9 +127,11 @@ The badge shows **remaining account allowance**, not a session’s token count o
 
 ## Beta feedback
 
-Report bugs and compatibility results through [GitHub Issues](https://github.com/Xentiles/NotchQ/issues/new/choose); the forms ask for the NotchQ version (shown in **About**, e.g. Bv0.3.2 build 10), macOS version, Mac processor and provider. Remove credentials, private conversations and personal paths from anything you share. See [CONTRIBUTING.md](CONTRIBUTING.md) for what helps most. Pull requests aren't accepted without prior agreement.
+Report bugs and compatibility results through [GitHub Issues](https://github.com/Xentiles/NotchQ/issues/new/choose); the forms ask for the NotchQ version (shown in **About**, e.g. Bv0.3.3 build 11), macOS version, Mac processor and provider. Remove credentials, private conversations and personal paths from anything you share. See [CONTRIBUTING.md](CONTRIBUTING.md) for what helps most. Pull requests aren't accepted without prior agreement.
 
-**Attach NotchQ's log** to make a report much easier to solve. In Terminal, run:
+The quickest way is **Report a Bug…**, in NotchQ's dropdown or at the bottom of Settings. It copies NotchQ's log to your clipboard and opens the bug form with your NotchQ version, macOS version and processor filled in; paste the log into the "NotchQ log" field.
+
+**Attach NotchQ's log** to make a report much easier to solve. To copy it yourself instead, run this in Terminal:
 
 ```sh
 /usr/bin/log show --last 2h --style compact --predicate 'subsystem == "io.github.xentiles.NotchQ"'
