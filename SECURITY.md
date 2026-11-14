@@ -6,8 +6,8 @@ Only the **latest release** receives fixes. Please check that you are on it (Not
 
 | Version | Supported |
 | --- | --- |
-| Bv0.3.4 (latest) | Yes |
-| Bv0.3.3 and earlier | No (update in Settings) |
+| Bv0.4.0 (latest) | Yes |
+| Bv0.3.4 and earlier | No (update in Settings) |
 
 ## Reporting a vulnerability
 
@@ -25,7 +25,8 @@ NotchQ is a local macOS app with no NotchQ server or account. Areas where a repo
 
 - anything that could expose Codex or Claude **credentials, tokens or session data**;
 - the Codex and Claude Code **processes NotchQ starts**, and the folders and `PATH` it gives them;
-- the optional **Claude status-line fallback** and its edits to `~/.claude/settings.json`;
+- the optional **Claude status-line bridge** and its edits to `~/.claude/settings.json`;
+- the **Sign in to Claude Code…** action: the script NotchQ writes and opens in Terminal, and its sign-in status check;
 - files NotchQ writes under `~/Library/Application Support/NotchQ`;
 - the **in-app updater**: release checks, signature verification and replacing the app.
 

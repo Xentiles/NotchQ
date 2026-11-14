@@ -13,7 +13,7 @@ final class NotchQDiagnostics {
     }
     /// Why something failed or changed. Stable values, safe to share.
     enum Reason: String {
-        case timeout, throttled, signedOut, exited, disconnected, notFound, noLimits, incompatible, safetyStop, rejected
+        case timeout, throttled, signedOut, exited, disconnected, notFound, noLimits, incompatible, safetyStop, rejected, layout, apiBilling
         case systemSleep, displaySleep, otherUser, wake, automatic, chosen, upToDate, signature, download, manualOnly
     }
     struct Entry { let time: Date; let event: Event; let provider: NotchQProvider?; let remaining: Int?; let seconds: Double?; let visible: Bool?; let onActiveSpace: Bool?; var reason: Reason? = nil; var detail: String? = nil }
@@ -27,6 +27,8 @@ final class NotchQDiagnostics {
         let text = message.lowercased()
         // Order matters: several messages also suggest signing in, so specific causes come first.
         if text.contains("no usage limits") { return .noLimits }
+        if text.contains("layout is not recognized") { return .layout }
+        if text.contains("api usage billing") { return .apiBilling }
         if text.contains("throttled") || text.contains("rate limiting") { return .throttled }
         if text.contains("timed out") { return .timeout }
         if text.contains("closed unexpectedly") { return .exited }

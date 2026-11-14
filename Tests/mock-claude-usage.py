@@ -24,6 +24,19 @@ elif mode=='split-reset':
 elif mode=='ratelimited':
  frame(29,10,footer=False)
  print("What's contributing to your limits usage?\nUsage credits are off\nShowing last-known usage as of 20m ago (rate limited \u2014 try again in a moment)\nr to retry \u00b7 Esc to cancel",flush=True)
+elif mode=='until':
+ # Claude Code 2.1.304+ states when the limit on usage data ends.
+ frame(29,10,footer=False)
+ print("Showing last-known usage as of 5m ago (rate limited until 3:14am)\nr to retry \u00b7 Esc to cancel",flush=True)
+elif mode=='signedout':
+ # Captured from Claude Code 2.1.295 with the CLI signed out (folder shortened): a complete screen with no plan limits.
+ print('[Screen Reader Mode: on via flag]\nClaude Code v2.1.295\nOpus 5.5 \u00b7 API Usage Billing\n~/Library/Application Support/NotchQ/UsageCheck\nyou: /usage\nSettings  Status   Config   Usage   Stats\nSession\nTotal cost:            $0.0000\nTotal duration (API):  0s\nTotal duration (wall): 0s\nTotal code changes:    0 lines added, 0 lines removed\nUsage:                 0 input, 0 output, 0 cache read, 0 cache write\nEsc to cancel',flush=True)
+elif mode=='renamed':
+ # Newer wording: the session limit is named the 5-hour limit, with a warning line and a per-model row.
+ print('Settings  Status   Config   Usage   Stats\nCurrent 5-hour limit\n12% 12% used\nResets 6pm (Europe/Stockholm)\nApproaching your 5-hour limit\nWeekly limit (all models)\n30% 30% used\nResets Oct 16 at 6pm (Europe/Stockholm)\nWeekly limit (Sonnet only)\n2% 2% used\nr to refresh \u00b7 Esc to cancel',flush=True)
+elif mode=='layout':
+ # A screen that finished drawing in a layout this NotchQ version does not know.
+ print('Settings  Status   Config   Usage   Stats\nPlan usage\nFive hours: 12 percent of limit\nSeven days: 30 percent of limit\nEsc to cancel',flush=True)
 elif mode=='slow':time.sleep(.2);frame()
 else:frame()
 # Stay alive until the client terminates this owned process after its one response.

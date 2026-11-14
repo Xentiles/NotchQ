@@ -4,6 +4,8 @@ import AppKit
 // Shared by both usage clients; each case's text names the provider that produced it.
 enum NotchQSourceError: Error {
     case timeout, disconnected, exited, unavailable, rejected(String, Double?)
+    /// The usage service refused the check; `until` is when it said it would accept one again, if stated.
+    case rateLimited(until: Date?)
     var description: String {
         switch self {
         case .timeout: return "Usage request timed out. Retrying automatically."
@@ -11,10 +13,16 @@ enum NotchQSourceError: Error {
         case .exited: return "Claude Code closed unexpectedly. Retrying automatically."
         case .unavailable: return "Codex CLI unavailable. Open or reinstall Codex."
         case .rejected(let message, _): return message
+        case .rateLimited: return "Usage service throttled. Waiting before retrying."
         }
     }
     var retryAfter: Double? {
         if case .rejected(_, let delay) = self { return delay }
+        if case .rateLimited = self { return 60 }
+        return nil
+    }
+    var retryAt: Date? {
+        if case .rateLimited(let until) = self { return until }
         return nil
     }
 }

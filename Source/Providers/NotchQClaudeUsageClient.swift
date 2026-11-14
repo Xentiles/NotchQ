@@ -32,37 +32,83 @@ struct NotchQClaudeUsageParser {
         guard let today = calendar.date(from: parts) else { return nil }
         return today < now.addingTimeInterval(-60) ? calendar.date(byAdding: .day, value: 1, to: today) : today
     }
-    static func notchQParse(_ value: String, now: Date = Date()) -> NotchQUsageSnapshot? {
+    /// "rate limited until 3:14am": when Claude Code says its usage data can be fetched again.
+    /// The next occurrence of that clock time, in the stated zone or the Mac's own.
+    static func notchQRateLimitEnd(_ value: String, now: Date = Date(), timeZone: TimeZone = .current) -> Date? {
+        let text = notchQPlainText(value)
+        let pattern = try! NSRegularExpression(pattern: "rate[ -]?limited until (\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?(?:\\s*\\(([^()\\s]+)\\))?", options: .caseInsensitive)
+        guard let match = pattern.matches(in: text, range: NSRange(text.startIndex..., in: text)).last else { return nil }
+        func group(_ index: Int) -> String? { Range(match.range(at: index), in: text).map { String(text[$0]) } }
+        guard var hour = group(1).flatMap(Int.init) else { return nil }
+        let minute = group(2).flatMap(Int.init) ?? 0
+        if let half = group(3)?.lowercased() {
+            guard (1...12).contains(hour) else { return nil }
+            hour = hour % 12 + (half == "pm" ? 12 : 0)
+        } else if group(2) == nil { return nil }   // a bare number is not a clock time
+        guard (0...23).contains(hour), (0...59).contains(minute) else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = group(4).flatMap(TimeZone.init(identifier:)) ?? timeZone
+        var parts = calendar.dateComponents([.year, .month, .day], from: now); parts.hour = hour; parts.minute = minute
+        guard let today = calendar.date(from: parts) else { return nil }
+        return today < now.addingTimeInterval(-60) ? calendar.date(byAdding: .day, value: 1, to: today) : today
+    }
+    /// What a fully drawn /usage screen is. `nil` from `notchQClassify` means it is still loading.
+    enum Screen {
+        case reading(NotchQUsageSnapshot)
+        /// "Showing last-known usage … (rate limited …)": old figures, never shown as current.
+        case stale
+        /// Loaded, but only session cost: Claude Code is signed out or billed by API usage.
+        case noPlanLimits
+        /// Loaded, but not a layout this NotchQ version understands.
+        case unrecognized
+    }
+    // Section headers. Older Claude Code: "Current session", "Current week (all models)".
+    // Newer wording names the window ("5-hour limit"); other weekly rows ("(Sonnet only)") only end a block.
+    private static let headers = try! NSRegularExpression(pattern: "(?im)^(?:Current[ \\t]+(session|5[- ]hour(?:[ \\t]+(?:limit|window|session))?|week|7[- ]day(?:[ \\t]+(?:limit|window))?)|(5[- ]hour[ \\t]+(?:limit|window)|session[ \\t]+limit|weekly[ \\t]+limit|7[- ]day[ \\t]+limit))(?:[ \\t]+\\(([^\\n)]*)\\))?[ \\t]*$")
+    static func notchQClassify(_ value: String, now: Date = Date()) -> Screen? {
         let text = notchQPlainText(value).replacingOccurrences(of: "\r", with: "")
         // /usage ends with this screen-reader footer, even for a one-window account.
-        let footer = try! NSRegularExpression(pattern: "(?im)^Esc to cancel[^\n]*")
+        let footer = try! NSRegularExpression(pattern: "(?im)^[^\\n]*\\bEsc to cancel[^\\n]*")
         let endings = footer.matches(in: text, range: NSRange(text.startIndex..., in: text))
         guard let last = endings.last, let end = Range(last.range, in: text) else { return nil }
         let start = endings.dropLast().last.flatMap { Range($0.range, in: text)?.upperBound } ?? text.startIndex
         let trailing = String(text[end.upperBound...])
-        if trailing.contains("Current session") || trailing.contains("Current week") || trailing.contains("Loading usage") { return nil }
-        let frame = String(text[start..<end.lowerBound])
-        let headers = try! NSRegularExpression(pattern: "(?m)^Current (session|week \\([^\n]*\\))[ \t]*$")
+        // A newer frame has started drawing; do not reuse the older one.
+        if trailing.contains("Loading usage") || headers.firstMatch(in: trailing, range: NSRange(trailing.startIndex..., in: trailing)) != nil { return nil }
+        let frame = String(text[start..<end.upperBound])
+        // The folder-trust prompt also ends in "… Esc to cancel"; it is a step before /usage, not a layout.
+        if frame.contains("Quick safety check:") { return nil }
+        if frame.range(of: "last-known usage|rate[ -]?limited", options: [.regularExpression, .caseInsensitive]) != nil { return .stale }
         let matches = headers.matches(in: frame, range: NSRange(frame.startIndex..., in: frame))
         var windows: [NotchQUsageWindow] = []
         for (index, match) in matches.enumerated() {
-            guard let label = Range(match.range(at: 1), in: frame), let heading = Range(match.range, in: frame) else { return nil }
-            guard frame[label] == "session" || frame[label] == "week (all models)" else { continue }
-            let minutes = frame[label] == "session" ? 300 : 10080
+            guard let heading = Range(match.range, in: frame) else { return .unrecognized }
+            let kind = (Range(match.range(at: 1), in: frame) ?? Range(match.range(at: 2), in: frame)).map { frame[$0].lowercased() } ?? ""
+            let qualifier = Range(match.range(at: 3), in: frame).map { frame[$0].lowercased().trimmingCharacters(in: .whitespaces) }
+            let weekly = kind.hasPrefix("week") || kind.hasPrefix("7")
+            guard weekly ? (qualifier == nil || qualifier == "all models") : qualifier == nil else { continue }
+            let minutes = weekly ? 10080 : 300
             // A repeated header is a new redraw; never combine it with an older window.
             if minutes == 300 || windows.contains(where: { $0.minutes == minutes }) { windows.removeAll() }
             let stop = index + 1 < matches.count ? Range(matches[index + 1].range, in: frame)!.lowerBound : frame.endIndex
             let block = String(frame[heading.upperBound..<stop])
-            let usedRegex = try! NSRegularExpression(pattern: "(?:[0-9]+(?:\\.[0-9]+)?%[ \t]+)?([0-9]+(?:\\.[0-9]+)?)% used")
+            let usedRegex = try! NSRegularExpression(pattern: "(?:[0-9]+(?:\\.[0-9]+)?%[ \t]+)?([0-9]+(?:\\.[0-9]+)?)% (used|left|remaining)")
             guard let usedMatch = usedRegex.firstMatch(in: block, range: NSRange(block.startIndex..., in: block)),
-                  let usedRange = Range(usedMatch.range(at: 1), in: block), let used = Double(block[usedRange]),
-                  used.isFinite, (0...100).contains(used) else { return nil }
+                  let usedRange = Range(usedMatch.range(at: 1), in: block), let figure = Double(block[usedRange]),
+                  let wordRange = Range(usedMatch.range(at: 2), in: block),
+                  figure.isFinite, (0...100).contains(figure) else { return .unrecognized }
+            let used = block[wordRange] == "used" ? figure : 100 - figure
             let resetRegex = try! NSRegularExpression(pattern: "(?m)^Resets ([^\n]+)")
             let reset = resetRegex.firstMatch(in: block, range: NSRange(block.startIndex..., in: block))
                 .flatMap { Range($0.range(at: 1), in: block) }.map { String(block[$0].prefix(160)).trimmingCharacters(in: .whitespaces) }
             windows.append(NotchQUsageWindow(remaining: Int(floor(100 - used)), minutes: minutes, reset: reset.flatMap { notchQResetDate($0, now: now) }, resetDescription: reset))
         }
-        return windows.isEmpty ? nil : NotchQUsageSnapshot(windows: windows)
+        if !windows.isEmpty { return .reading(NotchQUsageSnapshot(windows: windows)) }
+        return matches.isEmpty && frame.contains("Total cost:") ? .noPlanLimits : .unrecognized
+    }
+    static func notchQParse(_ value: String, now: Date = Date()) -> NotchQUsageSnapshot? {
+        if case .reading(let snapshot)? = notchQClassify(value, now: now) { return snapshot }
+        return nil
     }
 }
 
@@ -88,6 +134,13 @@ final class NotchQClaudeUsageClient {
     var locator = NotchQExecutableLocator.shared
     var timeout: TimeInterval = 8
     private let directory: URL
+    static let noPlanLimitsMessage = "Claude Code is signed out or set to API usage billing, so /usage shows no plan limits. Run claude in Terminal, use /login with your Pro/Max account, then refresh."
+    static let signedOutMessage = "Sign in to Claude Code with your Pro/Max account, then refresh."
+    /// The failures that mean the command-line tool has no Pro/Max sign-in, which the user fixes by signing in.
+    static func notchQNeedsSignIn(_ message: String) -> Bool { message == signedOutMessage || message == noPlanLimitsMessage }
+    static let unrecognizedMessage = "Claude Code’s /usage layout is not recognized by this NotchQ version. Update NotchQ; retrying automatically."
+    /// How long to wait once the screen has drawn without plan limits, in case they are still loading.
+    var emptyScreenSettle: TimeInterval = 1.5
 
     init(directory: URL = NotchQPreferences.supportDirectory.appendingPathComponent("UsageCheck", isDirectory: true)) {
         self.directory = directory
@@ -102,7 +155,13 @@ final class NotchQClaudeUsageClient {
             notchQComplete(.failure(.rejected("Claude Code is unavailable. Install it or open Claude Code in Claude Desktop, then sign in with Pro/Max.", nil))); return
         }
         let timer = Timer(timeInterval: timeout, repeats: false) { [weak self] _ in
-            self?.notchQComplete(.failure(.rejected("Claude usage check timed out. Sign in to Claude Code; terminal output may be incompatible. Retrying automatically.", nil)))
+            guard let self = self else { return }
+            // A screen that finished drawing without usable figures is not a timeout; say what it was.
+            switch NotchQClaudeUsageParser.notchQClassify(self.buffer) {
+            case .noPlanLimits?: self.notchQComplete(.failure(.rejected(Self.noPlanLimitsMessage, nil)))
+            case .unrecognized?: self.notchQComplete(.failure(.rejected(Self.unrecognizedMessage, nil)))
+            default: self.notchQComplete(.failure(.rejected("Claude usage check timed out. Sign in to Claude Code; terminal output may be incompatible. Retrying automatically.", nil)))
+            }
         }
         deadline = timer; RunLoop.main.add(timer, forMode: .common)
     }
@@ -173,21 +232,33 @@ final class NotchQClaudeUsageClient {
         }
         let throttled = plain.range(of: "(?i)(?:\\b(?:API\\s*)?error[:\\s]+429\\b|\\bHTTP\\b[^\\r\\n]{0,16}\\b429\\b|\\b429[ :]+too many requests\\b|\\btoo many requests\\b|\\brate[ _-]?limit(?:ed|_error)\\b)", options: .regularExpression) != nil
         if throttled {
-            notchQComplete(.failure(.rejected("Usage service throttled. Waiting before retrying.", 60))); return
+            // Claude Code may say when its usage data can be fetched again; wait for that instead of guessing.
+            notchQComplete(.failure(.rateLimited(until: NotchQClaudeUsageParser.notchQRateLimitEnd(plain)))); return
         }
         if plain.contains("Not logged in") || plain.contains("Please run /login") {
-            notchQComplete(.failure(.rejected("Sign in to Claude Code with your Pro/Max account, then refresh.", nil))); return
+            notchQComplete(.failure(.rejected(Self.signedOutMessage, nil))); return
         }
         // Terminal output can split immediately before the final reset line.
         // Wait briefly for that line rather than completing on the percentages alone.
         settle?.invalidate(); settle = nil
-        if NotchQClaudeUsageParser.notchQParse(plain) != nil {
+        switch NotchQClaudeUsageParser.notchQClassify(plain) {
+        case .reading?:
             let timer = Timer(timeInterval: 0.25, repeats: false) { [weak self] _ in
                 guard let self = self, self.busy,
                       let snapshot = NotchQClaudeUsageParser.notchQParse(self.buffer) else { return }
                 self.notchQComplete(.success(snapshot))
             }
             settle = timer; RunLoop.main.add(timer, forMode: .common)
+        case .stale?:
+            notchQComplete(.failure(.rateLimited(until: NotchQClaudeUsageParser.notchQRateLimitEnd(plain))))
+        case .noPlanLimits?:
+            // Plan limits can load after the session summary; only a screen that stays this way counts.
+            let timer = Timer(timeInterval: emptyScreenSettle, repeats: false) { [weak self] _ in
+                guard let self = self, self.busy, case .noPlanLimits? = NotchQClaudeUsageParser.notchQClassify(self.buffer) else { return }
+                self.notchQComplete(.failure(.rejected(Self.noPlanLimitsMessage, nil)))
+            }
+            settle = timer; RunLoop.main.add(timer, forMode: .common)
+        case .unrecognized?, nil: break   // may still be drawing; the deadline reports it
         }
     }
     private func notchQComplete(_ result: Result<NotchQUsageSnapshot, NotchQSourceError>) {

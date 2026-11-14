@@ -6,6 +6,15 @@ func notchQLocalResetText(_ text: String, timeZone: TimeZone) -> String {
     return text.hasSuffix(suffix) ? String(text.dropLast(suffix.count)) : text
 }
 
+/// "35 s", "2 min 05 s", "1 h 54 min", "5 d 3 h": compact, and it visibly ticks while the menu is open.
+func notchQDurationText(_ interval: TimeInterval) -> String {
+    let seconds = max(0, Int(interval.rounded(.down)))
+    if seconds < 60 { return "\(seconds) s" }
+    if seconds < 3600 { return String(format: "%d min %02d s", seconds / 60, seconds % 60) }
+    if seconds < 86_400 { return "\(seconds / 3600) h \(seconds % 3600 / 60) min" }
+    return "\(seconds / 86_400) d \(seconds % 86_400 / 3600) h"
+}
+
 func notchQUsageMenuRows(_ state: NotchQUsageState, now: Date = Date(), timeZone: TimeZone = .current) -> [String] {
     var rows: [String] = []
     if let error = state.error { rows.append(error) }
@@ -15,18 +24,20 @@ func notchQUsageMenuRows(_ state: NotchQUsageState, now: Date = Date(), timeZone
         return left == right ? $0.offset < $1.offset : left < right
     }.map(\.element)
     let prefix = state.error == nil || state.holding ? "" : "Last known "
-    rows += windows.map { "\(prefix)\($0.label): \($0.remaining)% left" }
+    let takeover = state.snapshot?.weeklyNearlyExhausted ?? false
+    rows += windows.map { "\(prefix)\($0.label): \($0.remaining)% left" + (takeover && $0.minutes == 10080 ? " — nearly used up; shown on the badge" : "") }
     let resetFormat = DateFormatter()
     resetFormat.dateStyle = .medium; resetFormat.timeStyle = .short; resetFormat.timeZone = timeZone
     for window in windows {
         let reset = window.reset.map { resetFormat.string(from: $0) } ?? window.resetDescription.map { notchQLocalResetText($0, timeZone: timeZone) } ?? "unavailable"
-        rows.append("\(prefix)\(window.label) resets: \(reset)")
+        let countdown = window.reset.flatMap { $0 > now ? " (in \(notchQDurationText($0.timeIntervalSince(now))))" : nil } ?? ""
+        rows.append("\(prefix)\(window.label) resets: \(reset)\(countdown)")
     }
     if let updated = state.updated {
         let time = DateFormatter()
         time.locale = Locale(identifier: "en_US_POSIX"); time.timeZone = timeZone; time.dateFormat = "HH:mm:ss"
         let suffix = state.error == nil ? "" : " (last successful check)"
-        rows.append("Last updated: \(time.string(from: updated))\(suffix)")
+        rows.append("Last updated: \(time.string(from: updated)) (\(notchQDurationText(now.timeIntervalSince(updated))) ago)\(suffix)")
     }
     if now < state.nextAllowed {
         let seconds = Int(ceil(state.nextAllowed.timeIntervalSince(now)))

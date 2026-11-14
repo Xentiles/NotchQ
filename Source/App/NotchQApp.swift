@@ -49,7 +49,29 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var providers: [NotchQProvider] = []
     var testPresence: [NotchQProvider]?
     var claudeState = NotchQUsageState()
+    /// Whether the displayed Claude value came from a /usage check (true) or Claude Code's status line (false).
     var claudeReadWasPolled = false
+    /// The latest /usage check's failure, kept while a status-line reading is shown in its place.
+    var claudePollFailure: String?
+    /// Claude Code's command-line tool is signed out (or billed by API usage); set by those failures, cleared by the next reading.
+    var claudeNeedsSignIn = false
+    /// Reduce Motion replaces the pulse with a steady dim. Replaced in tests.
+    var reduceMotion: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    /// The pulse layer over the standard menu-bar item (the notch badge has its own).
+    let statusPulse = NotchQPulseView()
+    private(set) var statusPulseRanges: [NSRange] = []
+    /// Providers whose badge figure is a weekly limit with less than 5% left; their figure pulses.
+    var pulsingProviders: [NotchQProvider] {
+        sleeping ? [] : displayedProviders.filter { ($0 == .codex ? state : claudeState).pulsing }
+    }
+    /// The dropdown's time-dependent rows, kept so an open menu can be updated in place every second.
+    var menuClock: () -> Date = { Date() }
+    private(set) weak var openMenu: NSMenu?
+    private(set) var liveMenuHeaders: [NotchQProvider: NSMenuItem] = [:]
+    private(set) var liveMenuRows: [NotchQProvider: [NSMenuItem]] = [:]
+    private(set) var menuTimer: Timer?
+    static let claudeSignedOutMessage = "Claude Code is signed out. Sign in with your Pro or Max account to show usage."
+    let claudeSignIn = NotchQClaudeSignIn()
     var claudeCadence = NotchQPollCadence(base: NotchQPreferences.claudeRefreshInterval, maximum: 900)
     let claudeConnection: NotchQClaudeConnection
     var settings: NotchQSettingsController?
@@ -86,7 +108,11 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if provider == .codex {
             return state.error ?? state.snapshot?.displayWindow.map { "\($0.remaining)% remaining; checked every 10 seconds." } ?? "Waiting for usage."
         }
-        return claudeState.error ?? claudeState.snapshot?.displayWindow.map { claudeReadWasPolled ? "\($0.remaining)% remaining; checked every 2 minutes." : "\($0.remaining)% remaining; recent status-line snapshot." } ?? "Waiting for usage."
+        if claudeSignIn.waiting { return claudeSignIn.message }
+        return claudeState.error ?? claudeState.snapshot?.displayWindow.map {
+            claudeReadWasPolled ? "\($0.remaining)% remaining; checked every 2 minutes."
+                : "\($0.remaining)% remaining; status-line snapshot from Claude Code’s latest reply." + (claudePollFailure.map { " /usage: \($0)" } ?? "")
+        } ?? "Waiting for usage."
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -101,6 +127,8 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NotchQPreferences.notchQPrepareDefaults()
         notch = NotchQBadgeController()
         notch?.onClick = { [weak self] in self?.notchQShowBadgeMenu() }
+        notch?.reduceMotion = { [weak self] in self?.reduceMotion() ?? false }
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(notchQAccessibilityChanged), name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(notchQRecoverDisplay), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         client.onDisconnect = { [weak self] in
             guard let self = self, !self.sleeping else { return }
@@ -223,24 +251,44 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if reading.holding, let window = reading.snapshot?.displayWindow { return "\(provider.displayName) \(window.label) \(reading.percentage) remaining (last reading; \(reading.error!))" }
             if let error = reading.error { return "\(provider.displayName) usage unavailable: \(error)" }
             guard let window = reading.snapshot?.displayWindow else { return "\(provider.displayName) usage unavailable; awaiting a fresh reading" }
-            return "\(provider.displayName) \(window.label) \(reading.percentage) remaining"
+            return "\(provider.displayName) \(window.label) \(reading.percentage) remaining" + (reading.pulsing ? " (weekly limit nearly used up)" : "")
         }.joined(separator: "; ")
+        let ranges = notchQProviderRanges(displayed, codex: state.percentage, claude: claudeState.percentage)
+        let pulse = pulsingProviders.compactMap { ranges[$0] }
         if showsPlaceholder {
             let image = NSImage(systemSymbolName: "gauge.medium", accessibilityDescription: "NotchQ") ?? NSImage(systemSymbolName: "gauge", accessibilityDescription: "NotchQ")
             image?.isTemplate = true
+            statusPulseRanges = []
             item.button?.image = image; item.button?.attributedTitle = NSAttributedString(string: image == nil ? "NotchQ" : "")
             item.button?.toolTip = "NotchQ: no Codex or Claude usage source found. Click for details."
             item.button?.setAccessibilityLabel("NotchQ"); item.button?.setAccessibilityValue("No usage source found")
         } else {
             item.button?.image = nil
-            item.button?.attributedTitle = notchQProviderTitle(displayed, codex: state.percentage, claude: claudeState.percentage, onBlack: false)
+            // The menu-bar item draws its title itself; a pulsing figure is left out there and drawn by the layer above.
+            let title = notchQProviderTitle(displayed, codex: state.percentage, claude: claudeState.percentage, onBlack: false)
+            let shown = pulse.isEmpty ? title : notchQMaskedTitle(title, ranges: pulse, keep: false)
+            if item.button?.attributedTitle.isEqual(to: shown) != true || pulse != statusPulseRanges { statusPulse.needsDisplay = true }
+            statusPulseRanges = pulse
+            item.button?.attributedTitle = shown
+            if let button = item.button, statusPulse.superview !== button {
+                statusPulse.frame = button.bounds; statusPulse.autoresizingMask = [.width, .height]; statusPulse.drawsFlipped = button.isFlipped
+                statusPulse.drawContent = { [weak self, weak button] view in
+                    guard let self = self, let button = button, let cell = button.cell as? NSButtonCell, !self.statusPulseRanges.isEmpty else { return }
+                    // The button's own cell draws the figure, so it lands exactly where the title would put it.
+                    let figure = notchQMaskedTitle(notchQProviderTitle(self.displayedProviders, codex: self.state.percentage, claude: self.claudeState.percentage, onBlack: false), ranges: self.statusPulseRanges, keep: true)
+                    _ = cell.drawTitle(figure, withFrame: cell.titleRect(forBounds: view.bounds), in: view)
+                }
+                button.addSubview(statusPulse)
+            }
             item.button?.toolTip = names
             item.button?.setAccessibilityLabel("AI usage remaining")
             item.button?.setAccessibilityValue(names)
         }
-        notch?.notchQUpdateBadge(title: notchQProviderTitle(displayed, codex: state.percentage, claude: claudeState.percentage), indicatorCount: displayed.count, tooltip: names)
+        notch?.notchQUpdateBadge(title: notchQProviderTitle(displayed, codex: state.percentage, claude: claudeState.percentage), indicatorCount: displayed.count, tooltip: names, pulse: pulse)
         notchQRepositionBadge()
-        settings?.notchQRefreshSettings(codexMessage: notchQProviderStatusMessage(.codex), claudeMessage: notchQProviderStatusMessage(.claude), refreshing: !manualRefreshPending.isEmpty || client.busy || claudeClient.busy, canRefresh: !sleeping && !providers.isEmpty && manualRefreshPending.isEmpty)
+        notchQTickMenu()   // a reading that arrives while the menu is open shows at once
+        settings?.notchQRefreshSettings(codexMessage: notchQProviderStatusMessage(.codex), claudeMessage: notchQProviderStatusMessage(.claude), refreshing: !manualRefreshPending.isEmpty || client.busy || claudeClient.busy, canRefresh: !sleeping && !providers.isEmpty && manualRefreshPending.isEmpty,
+                                        claudeNeedsSignIn: claudeNeedsSignIn && providers.contains(.claude), signingIn: claudeSignIn.waiting)
     }
 
     func notchQUpdateClaudeState() {
@@ -256,23 +304,26 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else if claudeConnection.notchQCachedReading(maximumAge: .infinity) != nil {
             claudeState.error = "The last Claude Code reading is older than three minutes and is hidden. Wait for a new Claude Code response."
         } else {
-            claudeState.error = "Connection configured; no current quota reading. Install/update Claude Code and sign in with Pro/Max. The status-line fallback needs a response."
+            claudeState.error = "Connection configured; no current quota reading. Install/update Claude Code and sign in with Pro/Max. The status-line bridge needs a Claude Code reply."
         }
     }
 
     func notchQRefreshClaude() {
         guard !testingLifecycle || claudeClient.executableOverride != nil else { return }
         if notchQProviderInactiveMessage(.claude) != nil || sleeping {
-            manualRefreshPending.remove(.claude)
+            manualRefreshPending.remove(.claude); claudeSignIn.notchQStop()
             claudeClient.notchQStop()
             notchQUpdateClaudeState(); notchQRenderBadge(); return
         }
-        // The optional status-line snapshot is only used when no local CLI can be resolved.
+        // Without a local CLI the optional status-line snapshot is the only source.
         guard claudeClient.executableOverride != nil || locator.notchQLocate(.claude) != nil else {
             manualRefreshPending.remove(.claude)
-            claudeReadWasPolled = false
+            claudeReadWasPolled = false; claudeNeedsSignIn = false; claudeSignIn.notchQStop()
             notchQUpdateClaudeState(); notchQRenderBadge(); return
         }
+        // With a CLI, /usage stays the regular check (it also sees claude.ai and Claude Desktop usage);
+        // the status line adds the figures Claude Code reported after its latest reply.
+        notchQExpireClaudeWindows(); notchQApplyClaudeStatusLine()
         guard !claudeClient.busy, Date() >= claudeState.nextAllowed else { return }
         manualRefreshPending.remove(.claude)
         let generation = requestGeneration, started = Date()
@@ -281,25 +332,103 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         claudeClient.notchQFetchUsage { [weak self] result in
             guard let self = self, !self.sleeping, !self.shuttingDown, self.providers.contains(.claude), self.requestGeneration == generation else { return }
             let now = Date()
+            var failure: String?, reason: NotchQDiagnostics.Reason?
             switch result {
             case .success(let snapshot):
-                self.claudeReadWasPolled = true; self.claudeState.notchQRecordSuccess(snapshot, now: now)
+                self.claudeReadWasPolled = true; self.claudePollFailure = nil
+                self.claudeNeedsSignIn = false; self.claudeSignIn.notchQStop()
+                self.claudeState.notchQRecordSuccess(NotchQUsageSnapshot.notchQMerged(current: self.claudeState.snapshot, incoming: snapshot, now: now) ?? snapshot, now: now)
                 self.claudeState.nextAllowed = now.addingTimeInterval(self.claudeCadence.notchQSucceeded())
             case .failure(let error) where error.retryAfter != nil:
-                let wait = self.claudeCadence.notchQThrottled()
+                // Claude Code may state when the limit on usage data ends; otherwise back off step by step.
+                let wait = error.retryAt.map { min(3600, max(60, $0.timeIntervalSince(now) + 5)) } ?? self.claudeCadence.notchQThrottled()
                 let readAt = self.claudeState.updated
                 let reading = readAt.map { "Showing the \(DateFormatter.localizedString(from: $0, dateStyle: .none, timeStyle: .short)) reading. " } ?? ""
-                self.claudeState.notchQRecordFailure("Claude’s usage service is rate limiting checks. \(reading)Next check in about \(Int(wait / 60)) min.", now: now, retryAfter: wait)
+                self.claudeState.notchQRecordFailure("Claude’s usage service is rate limiting checks. \(reading)Next check in about \(max(1, Int((wait / 60).rounded()))) min.", now: now, retryAfter: wait)
                 // Keep a recent reading on the badge instead of flickering to "—%" for a short limit.
                 if let readAt = readAt, now.timeIntervalSince(readAt) < 300 { self.claudeState.holdUntil = readAt.addingTimeInterval(300) }
+                failure = self.claudeState.error
             case .failure(let error):
-                self.claudeState.notchQRecordFailure(error.description, now: now)
+                // Signed out is a state the user can fix from the menu or Settings; say so plainly.
+                self.claudeNeedsSignIn = NotchQClaudeUsageClient.notchQNeedsSignIn(error.description)
+                reason = NotchQDiagnostics.notchQReason(for: error.description)
+                self.claudeState.notchQRecordFailure(self.claudeNeedsSignIn ? Self.claudeSignedOutMessage : error.description, now: now)
                 self.claudeState.nextAllowed = max(self.claudeState.nextAllowed, now.addingTimeInterval(self.claudeCadence.interval))
+                failure = self.claudeState.error
             }
-            NotchQDiagnostics.shared.record(self.claudeState.error == nil ? .succeeded : .failed, provider: .claude, remaining: self.claudeState.snapshot?.displayWindow?.remaining, seconds: Date().timeIntervalSince(started), reason: self.claudeState.error.map(NotchQDiagnostics.notchQReason))
+            if let failure = failure {
+                self.claudePollFailure = failure
+                // A status-line reading from the last few minutes stays on the badge; the status text carries the failure.
+                if !self.claudeReadWasPolled, self.claudeState.snapshot != nil,
+                   let read = self.claudeState.updated, now.timeIntervalSince(read) <= NotchQPreferences.claudeMaximumAge {
+                    self.claudeState.error = nil; self.claudeState.holdUntil = nil
+                } else { _ = self.notchQApplyClaudeStatusLine(now: now) }
+            }
+            NotchQDiagnostics.shared.record(failure == nil ? .succeeded : .failed, provider: .claude, remaining: self.claudeState.snapshot?.displayWindow?.remaining, seconds: Date().timeIntervalSince(started), reason: reason ?? failure.map(NotchQDiagnostics.notchQReason))
             self.notchQRenderBadge()
             if self.manualRefreshPending.contains(.claude) { self.claudeState.notchQPrepareManualRefresh(); self.notchQPollUsage(only: [.claude]) }
         }
+    }
+
+    /// A displayed Claude window whose reset time has passed is no longer current: stop showing it and
+    /// ask /usage right away (an active rate limit still has to run out first).
+    func notchQExpireClaudeWindows(now: Date = Date()) {
+        // A status-line reading that stood in for a failing /usage check only does so while it is recent.
+        if !claudeReadWasPolled, claudeState.error == nil, let failure = claudePollFailure,
+           let read = claudeState.updated, now.timeIntervalSince(read) > NotchQPreferences.claudeMaximumAge {
+            claudeState.error = failure; notchQRenderBadge()
+        }
+        guard let snapshot = claudeState.snapshot, snapshot.windows.contains(where: { $0.reset.map { $0 <= now } ?? false }) else { return }
+        let headline = snapshot.displayWindow
+        claudeState.snapshot = snapshot.notchQUnexpired(now: now)
+        if let headline = headline, headline.reset.map({ $0 <= now }) ?? false {
+            claudeState.holdUntil = nil
+            if claudeState.error == nil { claudeState.error = "The \(headline.label) limit reset. Waiting for a fresh reading." }
+        }
+        // Ask /usage now, unless it was asked within the last minute: around the reset time Claude Code can
+        // still print the old reset, and re-asking every 10 seconds would only earn a rate limit.
+        let justPolled = claudeReadWasPolled && (claudeState.updated.map { now.timeIntervalSince($0) < 60 } ?? false)
+        if !justPolled { claudeState.nextAllowed = claudeState.throttledUntil }
+        notchQRenderBadge()
+    }
+
+    /// Applies the status-line bridge's reading when Claude Code reported it after the value now shown.
+    /// It never lifts a rate limit or brings the next /usage check forward.
+    @discardableResult
+    func notchQApplyClaudeStatusLine(now: Date = Date()) -> Bool {
+        guard let reading = claudeConnection.notchQCachedReading(now: now),
+              reading.observedAt > claudeState.updated ?? .distantPast,
+              let merged = NotchQUsageSnapshot.notchQMerged(current: claudeState.snapshot, incoming: reading.snapshot, now: now) else { return false }
+        let schedule = (claudeState.nextAllowed, claudeState.throttledUntil, claudeState.failures)
+        claudeState.notchQRecordSuccess(merged, now: reading.observedAt)
+        (claudeState.nextAllowed, claudeState.throttledUntil, claudeState.failures) = schedule
+        claudeReadWasPolled = false
+        NotchQDiagnostics.shared.record(.snapshot, provider: .claude, remaining: merged.displayWindow?.remaining)
+        notchQRenderBadge()
+        return true
+    }
+
+    /// Opens Claude Code's own sign-in in Terminal, then waits for `claude auth status` to report a sign-in.
+    @objc func notchQSignInClaude() {
+        guard claudeNeedsSignIn, !sleeping, !shuttingDown, !claudeSignIn.waiting,
+              let executable = claudeClient.executableOverride ?? locator.notchQLocate(.claude)?.url else { return }
+        claudeSignIn.notchQStart(executable: executable, changed: { [weak self] in self?.notchQRenderBadge() }) { [weak self] outcome in
+            guard let self = self, !self.shuttingDown else { return }
+            switch outcome {
+            case .signedIn:
+                self.claudeNeedsSignIn = false
+                self.claudeState.error = "Signed in to Claude Code. Waiting for a fresh reading."
+                // Ask /usage right away; a rate limit that is still running has to end first.
+                self.claudeState.notchQPrepareManualRefresh()
+                self.notchQRenderBadge(); self.notchQPollUsage(only: [.claude])
+            case .timedOut:
+                self.notchQRenderBadge()
+            case .failedToStart:
+                self.claudeState.error = "Could not open Terminal for the sign-in. Run claude auth login in Terminal, then refresh."
+                self.notchQRenderBadge()
+            }
+        }
+        notchQRenderBadge()
     }
 
     @objc func notchQShowSettings() {
@@ -319,6 +448,7 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             controller.onRefresh = { [weak self] in self?.notchQRefreshUsage() }
             controller.onOpenCodex = { [weak self] in self?.notchQOpenCodex() }
             controller.onOpenClaude = { [weak self] in self?.notchQOpenClaude() }
+            controller.onSignInClaude = { [weak self] in self?.notchQSignInClaude() }
             controller.onQuit = { NSApp.terminate(nil) }
             controller.onReportBug = { [weak self] in self?.notchQReportBug() }
             settings = controller
@@ -374,7 +504,15 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
     }
+    /// The menu-bar item's pulse runs only while that item is the one on screen and the Mac is awake.
+    func notchQSyncStatusPulse() {
+        statusPulse.notchQApply(shown: !statusPulseRanges.isEmpty && !showsPlaceholder, animate: (item?.isVisible ?? false) && !sleeping, reduceMotion: reduceMotion())
+    }
+    @objc func notchQAccessibilityChanged() { notchQRenderBadge() }
+
     func notchQRepositionBadge(recovering: Bool = false) {
+        // Whichever way this ends, the pulse follows where the badge now is (notch, menu bar, or hidden).
+        defer { notchQSyncStatusPulse(); notch?.notchQSyncPulse() }
         if menuTracking && !sleeping { displayRecoveryPending = true; return }
         if sleeping || displayedProviders.isEmpty {
             notch?.notchQHideBadge(animated: !sleeping && !testingLifecycle)
@@ -392,6 +530,7 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         notchQRecoverDisplay()
     }
     func menuDidClose(_ menu: NSMenu) {
+        if menu === openMenu { notchQStopMenuTimer() }
         guard menu === item?.menu else { return }
         menuTracking = false
         let recover = displayRecoveryPending; displayRecoveryPending = false
@@ -416,15 +555,20 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         notchQMenuInfo("NotchQ")
         menu.addItem(.separator())
-        if providers.contains(.codex) {
-            notchQMenuInfo("Codex — white")
-            notchQUsageMenuRows(state).forEach(notchQMenuInfo)
+        liveMenuHeaders.removeAll(); liveMenuRows.removeAll()
+        // Each provider's rows are remembered so notchQTickMenu can retitle them while the menu is open.
+        func notchQMenuLive(_ provider: NotchQProvider, _ header: String) {
+            notchQMenuInfo(header); liveMenuHeaders[provider] = menu.items.last
+            liveMenuRows[provider] = notchQLiveMenuRows(provider).map { notchQMenuInfo($0); return menu.items.last! }
         }
+        if providers.contains(.codex) { notchQMenuLive(.codex, "Codex — white") }
         if providers.contains(.claude) {
             if providers.contains(.codex) { menu.addItem(.separator()) }
-            notchQMenuInfo("Claude — orange")
-            let rows = notchQUsageMenuRows(claudeState)
-            (rows.isEmpty ? ["Claude usage unavailable"] : rows).forEach(notchQMenuInfo)
+            notchQMenuLive(.claude, "Claude — orange")
+            if claudeNeedsSignIn {
+                if claudeSignIn.waiting { notchQMenuInfo(claudeSignIn.message) }
+                notchQMenuAction("Sign in to Claude Code…", #selector(notchQSignInClaude)).isEnabled = !sleeping && !claudeSignIn.waiting
+            }
         }
         if providers.isEmpty {
             notchQMenuInfo("No usage source to show")
@@ -452,7 +596,49 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(.separator()); _ = notchQMenuAction("Quit", #selector(notchQQuit))
         if menu === item?.menu { menuTracking = true }
+        openMenu = menu; notchQStartMenuTimer()
     }
+
+    /// The text rows under a provider's heading, as of the menu clock.
+    func notchQLiveMenuRows(_ provider: NotchQProvider) -> [String] {
+        let now = menuClock()
+        if provider == .codex { return notchQUsageMenuRows(state, now: now) }
+        var rows = notchQUsageMenuRows(claudeState, now: now)
+        if rows.isEmpty { rows = ["Claude usage unavailable"] }
+        if claudeState.error == nil, claudeState.snapshot != nil {
+            rows.append(claudeReadWasPolled ? "Source: Claude Code /usage check" : "Source: Claude Code status line")
+            if !claudeReadWasPolled, let failure = claudePollFailure { rows.append("/usage: \(failure)") }
+        }
+        return rows
+    }
+    /// Brings the open menu's rows up to date without rebuilding it (a rebuild would close or flicker it):
+    /// existing items are retitled; a row is added or removed only when a new reading changes how many there are.
+    func notchQTickMenu() {
+        guard let menu = openMenu else { return }
+        for (provider, header) in liveMenuHeaders {
+            let start = menu.index(of: header)
+            guard start >= 0 else { continue }
+            let rows = notchQLiveMenuRows(provider)
+            var items = liveMenuRows[provider] ?? []
+            for (index, row) in rows.enumerated() {
+                if index < items.count { if items[index].title != row { items[index].title = row } }
+                else {
+                    let item = NSMenuItem(title: row, action: nil, keyEquivalent: ""); item.isEnabled = false
+                    menu.insertItem(item, at: start + 1 + index); items.append(item)
+                }
+            }
+            while items.count > rows.count { menu.removeItem(items.removeLast()) }
+            liveMenuRows[provider] = items
+        }
+    }
+    /// Once a second while the menu is open; common modes, so it also fires while the menu tracks the mouse.
+    func notchQStartMenuTimer() {
+        menuTimer?.invalidate()
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.notchQTickMenu() }
+        timer.tolerance = 0.1
+        menuTimer = timer; RunLoop.main.add(timer, forMode: .common)
+    }
+    func notchQStopMenuTimer() { menuTimer?.invalidate(); menuTimer = nil; openMenu = nil }
 
     @objc func notchQOpenCodex() {
         let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex") ?? URL(fileURLWithPath: "/Applications/ChatGPT.app")
@@ -486,10 +672,10 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } catch { loginError = "Could not change login startup; check System Settings." }
     }
     @objc func notchQWillSleep() {
-        menuTracking = false; displayRecoveryPending = false; item.menu?.cancelTracking()
+        menuTracking = false; displayRecoveryPending = false; item.menu?.cancelTracking(); notchQStopMenuTimer()
         sleeping = true; recoveryGeneration += 1; requestGeneration += 1; manualRefreshPending.removeAll()
         state.holdUntil = nil; claudeState.holdUntil = nil
-        timer?.invalidate(); client.notchQStopClient(); claudeClient.notchQStop()
+        timer?.invalidate(); client.notchQStopClient(); claudeClient.notchQStop(); claudeSignIn.notchQStop()
         state.error = "Mac asleep; waiting for a fresh reading."; claudeState.error = state.error
         notch?.notchQHideBadge(animated: false); notchQRenderBadge()
     }
@@ -512,9 +698,9 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func notchQSessionActivated() { sessionActive = true; notchQResume() }
     @objc func notchQQuit() { NSApp.terminate(nil) }
     func applicationWillTerminate(_ notification: Notification) {
-        shuttingDown = true; recoveryGeneration += 1; requestGeneration += 1; manualRefreshPending.removeAll()
+        shuttingDown = true; recoveryGeneration += 1; requestGeneration += 1; manualRefreshPending.removeAll(); notchQStopMenuTimer()
         NotificationCenter.default.removeObserver(self); NSWorkspace.shared.notificationCenter.removeObserver(self)
-        timer?.invalidate(); client.notchQStopClient(wait: true); claudeClient.notchQStop(wait: true)
+        timer?.invalidate(); client.notchQStopClient(wait: true); claudeClient.notchQStop(wait: true); claudeSignIn.notchQStop()
         notch?.notchQCloseBadge()
         settings?.window.close()
         if showDiagnostic { print("shutdown complete; readings=\(diagnosticCount)") }

@@ -18,6 +18,7 @@ final class NotchQSettingsController: NSObject, NSWindowDelegate {
     var onRefresh: (() -> Void)?
     var onOpenCodex: (() -> Void)?
     var onOpenClaude: (() -> Void)?
+    var onSignInClaude: (() -> Void)?
     var onQuit: (() -> Void)?
     var onReportBug: (() -> Void)?
     private let notch = NSButton(checkboxWithTitle: "Place beside the notch", target: nil, action: nil)
@@ -32,10 +33,13 @@ final class NotchQSettingsController: NSObject, NSWindowDelegate {
     // Plans per OpenAI's Codex pricing page (Oct 2026): Free/Go are desktop-only with unspecified limits;
     // credit-based workspaces and API-key sign-ins have no usage windows to report.
     private let codexHelp = NSTextField(wrappingLabelWithString: "Shows the allowance of ChatGPT plans with Codex usage limits, such as Plus, Pro and Business. Free and Go plans, credit-based workspaces and API-key sign-ins may not report a percentage.")
-    private let claudeHelp = NSTextField(wrappingLabelWithString: "Uses Claude Code’s own Pro or Max sign-in. Free-plan percentages are unavailable. The status-line fallback is optional.")
+    private let claudeHelp = NSTextField(wrappingLabelWithString: "Uses Claude Code’s own Pro or Max sign-in. Free-plan percentages are unavailable. The optional status-line bridge adds updates after each Claude Code reply.")
     private let loginStatus = NSTextField(wrappingLabelWithString: "")
-    private let connect = NSButton(title: "Status-line fallback…", target: nil, action: nil)
-    private let disconnect = NSButton(title: "Remove fallback", target: nil, action: nil)
+    /// Shown only while Claude Code is signed out; starts Claude Code's own sign-in.
+    let signIn = NSButton(title: "Sign in to Claude Code…", target: nil, action: nil)
+    private(set) var signInRow: NSStackView!
+    private let connect = NSButton(title: "Status-line bridge…", target: nil, action: nil)
+    private let disconnect = NSButton(title: "Remove bridge", target: nil, action: nil)
     private let codexAutomatic = NSButton(title: "Use automatic", target: nil, action: nil)
     private let claudeAutomatic = NSButton(title: "Use automatic", target: nil, action: nil)
     private let loginItems = NSButton(title: "Login Items…", target: nil, action: nil)
@@ -102,6 +106,8 @@ final class NotchQSettingsController: NSObject, NSWindowDelegate {
         let claudeGroup = notchQGroup()
         claude.target = self; claude.action = #selector(notchQChangePreferences(_:)); claudeGroup.addArrangedSubview(claude)
         claudeStatus.font = .systemFont(ofSize: 12); claudeStatus.textColor = .secondaryLabelColor; notchQAdd(claudeStatus, to: claudeGroup)
+        signIn.target = self; signIn.action = #selector(notchQSignInClaude); signIn.bezelStyle = .rounded
+        signInRow = notchQRow([signIn]); signInRow.isHidden = true; claudeGroup.addArrangedSubview(signInRow)
         claudePath.font = .systemFont(ofSize: 11); claudePath.textColor = .tertiaryLabelColor; notchQAdd(claudePath, to: claudeGroup)
         connect.target = self; connect.action = #selector(notchQConnectClaude); connect.bezelStyle = .rounded
         disconnect.target = self; disconnect.action = #selector(notchQDisconnectClaude); disconnect.bezelStyle = .rounded
@@ -177,7 +183,9 @@ final class NotchQSettingsController: NSObject, NSWindowDelegate {
         let path = (location.url.path as NSString).abbreviatingWithTildeInPath
         return (location.source == .chosen ? "Using chosen CLI: " : "Found automatically: ") + path
     }
-    func notchQRefreshSettings(codexMessage: String? = nil, claudeMessage: String? = nil, refreshing: Bool = false, canRefresh: Bool = true) {
+    func notchQRefreshSettings(codexMessage: String? = nil, claudeMessage: String? = nil, refreshing: Bool = false, canRefresh: Bool = true, claudeNeedsSignIn: Bool = false, signingIn: Bool = false) {
+        if signInRow.isHidden == claudeNeedsSignIn { signInRow.isHidden = !claudeNeedsSignIn; notchQFitWindow() }
+        signIn.isEnabled = !signingIn
         notch.state = NotchQPreferences.preferNotch ? .on : .off
         running.state = NotchQPreferences.onlyRunningApps ? .on : .off
         codex.state = NotchQPreferences.codexEnabled ? .on : .off
@@ -221,9 +229,9 @@ final class NotchQSettingsController: NSObject, NSWindowDelegate {
         locator.notchQInvalidate(); onChange?(); notchQRefreshSettings()
     }
     @objc private func notchQConnectClaude() {
-        let alert = NSAlert(); alert.messageText = "Add the optional status-line fallback?"
-        alert.informativeText = "NotchQ already reads Claude usage with Claude Code’s read-only /usage check and does not need this. The fallback is only used when Claude Code cannot be found or run. It adds a local status-line bridge to your Claude Code user settings and backs up the previous command. It forwards only usage limits to NotchQ and preserves your current status-line output. No AI request or subscription change is made."
-        alert.addButton(withTitle: "Add fallback"); alert.addButton(withTitle: "Cancel")
+        let alert = NSAlert(); alert.messageText = "Add the optional status-line bridge?"
+        alert.informativeText = "NotchQ already reads Claude usage with Claude Code’s read-only /usage check every 2 minutes and does not need this. With the bridge, NotchQ also shows the figures Claude Code reports after each reply in a terminal session, so the badge updates sooner and keeps working while /usage checks are rate limited. It is the only source when Claude Code cannot be found or run. It adds a local status-line bridge to your Claude Code user settings and backs up the previous command. It forwards only usage limits to NotchQ and preserves your current status-line output. No AI request or subscription change is made."
+        alert.addButton(withTitle: "Add bridge"); alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         do { try connection.notchQConnect(executable: Bundle.main.executableURL!); notchQRefreshSettings(); onChange?() }
         catch { notchQShowError(error.localizedDescription) }
@@ -234,6 +242,7 @@ final class NotchQSettingsController: NSObject, NSWindowDelegate {
     }
     @objc private func notchQOpenCodex() { onOpenCodex?() }
     @objc private func notchQOpenClaude() { onOpenClaude?() }
+    @objc private func notchQSignInClaude() { onSignInClaude?() }
     @objc private func notchQRefresh() { onRefresh?() }
     @objc private func notchQLoginSettings() { SMAppService.openSystemSettingsLoginItems() }
     @objc private func notchQDone() { window.orderOut(nil) }

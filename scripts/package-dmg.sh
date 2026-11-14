@@ -18,6 +18,7 @@ NOTCHQ_ARCHS=" $(lipo -archs "$NOTCHQ_BINARY") "
 NOTCHQ_MINOS=$(vtool -show-build "$NOTCHQ_BINARY" | awk '$1 == "minos" { print $2 }' | sort -u)
 [[ "$NOTCHQ_MINOS" == "13.0" ]] || NOTCHQ_FAIL "minimum macOS is '$NOTCHQ_MINOS', expected 13.0"
 [[ $(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$NOTCHQ_PLIST") == "13.0" ]] || NOTCHQ_FAIL "Info.plist minimum macOS mismatch"
+[[ $(/usr/libexec/PlistBuddy -c 'Print :LSArchitecturePriority:0' "$NOTCHQ_PLIST") == arm64 ]] || NOTCHQ_FAIL "Info.plist must prefer arm64 (LSArchitecturePriority)"
 codesign --verify --strict --deep "$NOTCHQ_APP" || NOTCHQ_FAIL "code signature invalid"
 /usr/libexec/PlistBuddy -c 'Print :NotchQUpdatePublicKey' "$NOTCHQ_PLIST" >/dev/null 2>&1 || NOTCHQ_FAIL "Info.plist has no NotchQUpdatePublicKey"
 for NOTCHQ_RESOURCE in Libron-Regular.ttf Libron-LICENSE.txt NotchQ.icns; do
@@ -25,7 +26,9 @@ for NOTCHQ_RESOURCE in Libron-Regular.ttf Libron-LICENSE.txt NotchQ.icns; do
 done
 echo "Release checks passed: version $NOTCHQ_VERSION, archs$NOTCHQ_ARCHS, macOS $NOTCHQ_MINOS+"
 
-NOTCHQ_STAGE="$NOTCHQ_ROOT/work/dmg-stage"
+# The staging folder is emptied first. Set NOTCHQ_DMG_STAGE to stage elsewhere, e.g. when a copy of NotchQ
+# is being run from the default folder.
+NOTCHQ_STAGE="${NOTCHQ_DMG_STAGE:-$NOTCHQ_ROOT/work/dmg-stage}"
 # Public releases are labelled B(eta)v<version>, e.g. Bv0.2.0.
 NOTCHQ_IMAGE="$NOTCHQ_ROOT/releases/NotchQ-Bv$NOTCHQ_VERSION-universal-unsigned.dmg"
 NOTCHQ_WORKING="$NOTCHQ_ROOT/work/dmg-working.dmg"
@@ -56,7 +59,8 @@ FIRST RUN
 - NotchQ finds your installed Codex and Claude Code by itself and uses
   their existing sign-ins. It never sees your password.
 - Claude percentages need Claude Code signed in with Pro or Max.
-- Codex updates every 10 seconds. Claude updates once a minute,
+  If it is signed out, NotchQ offers "Sign in to Claude Code…".
+- Codex updates every 10 seconds. Claude updates every 2 minutes,
   because Claude's usage service limits frequent checks.
 - Not detected? Use Choose CLI… in Settings. Not using one? Untick it.
 - Start at login is optional.

@@ -29,9 +29,18 @@ window visibility flags. They are written to the macOS log on this Mac only
 anywhere. You choose whether to share them. File paths, raw terminal output,
 account identifiers and authentication data are never logged.
 
-The optional status-line fallback is installed only after the user chooses it
-in Settings. It wraps the existing user status-line command and stores a backup,
-and is used only when a local CLI cannot be resolved. The bridge receives Claude Code's documented JSON input, forwards that input to
+**Sign in to Claude Code…** appears only when Claude Code reports that it is signed out, and
+runs only when you click it. NotchQ writes a two-line script to its own folder (the path of
+your Claude Code tool followed by `auth login`) and opens it in Terminal, so the sign-in is
+Claude Code’s own: the account page opens in your browser and the result is stored by Claude
+Code. NotchQ never sees, receives or stores the account, password or tokens. While waiting, it
+asks `claude auth status` every few seconds for up to 5 minutes and reads only whether someone
+is signed in; the rest of that output is discarded and nothing from it is logged.
+
+The optional status-line bridge is installed only after the user chooses it
+in Settings. It wraps the existing user status-line command and stores a backup.
+NotchQ reads its small local cache file every 10 seconds and shows a reading there
+when it is newer than the last `/usage` check, or when no local CLI can be run. The bridge receives Claude Code's documented JSON input, forwards that input to
 the previous command, and saves only normalized usage windows and freshness
 counters for NotchQ. Workspace paths and session identifiers are discarded.
 
@@ -41,7 +50,7 @@ directory retains its current permissions. Written cache and backup files are
 set to owner read/write permissions. The bridge never extracts OAuth tokens, cookies or passwords and
 does not call private Claude usage endpoints. It does not generate model traffic.
 
-**Remove fallback** restores the earlier status-line object if its command still matches
+**Remove bridge** restores the earlier status-line object if its command still matches
 the installed bridge. A changed command is preserved. Other status-line fields
 are restored from the backup, while unrelated top-level settings are preserved.
 

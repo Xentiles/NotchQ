@@ -17,8 +17,14 @@ struct NotchQUsageWindow {
 struct NotchQUsageSnapshot {
     let windows: [NotchQUsageWindow]
     var remaining: Int { windows.map(\.remaining).min()! }
+    /// Below this many percent left, the weekly limit is the one about to stop the user, so it takes
+    /// over the badge from the 5-hour figure (and the figure pulses).
+    static let weeklyTakeoverBelow = 5
+    var weeklyNearlyExhausted: Bool { windows.contains { $0.minutes == 10080 && $0.remaining < Self.weeklyTakeoverBelow } }
+    /// The window the badge shows: the 5-hour one, unless the weekly one is nearly used up.
     var displayWindow: NotchQUsageWindow? {
-        windows.first { $0.minutes == 300 } ?? windows.first { $0.minutes == 10080 }
+        if weeklyNearlyExhausted, let weekly = windows.first(where: { $0.minutes == 10080 }) { return weekly }
+        return windows.first { $0.minutes == 300 } ?? windows.first { $0.minutes == 10080 }
             ?? windows.min { $0.remaining < $1.remaining }
     }
     static func notchQParseCodexLimits(_ result: [String: Any]) -> NotchQUsageSnapshot? {
@@ -34,6 +40,34 @@ struct NotchQUsageSnapshot {
             let reset = (value["resetsAt"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) }
             return NotchQUsageWindow(remaining: remaining, minutes: duration, reset: reset)
         }
+        return windows.isEmpty ? nil : NotchQUsageSnapshot(windows: windows)
+    }
+}
+
+extension NotchQUsageSnapshot {
+    /// Two reset times this close describe the same window period (sources round the time differently).
+    static let samePeriodTolerance: TimeInterval = 120
+    static let roundingSlack = 2
+    /// Windows whose reset time has not passed; `nil` when none is left. A window past its reset is no longer current.
+    func notchQUnexpired(now: Date = Date()) -> NotchQUsageSnapshot? {
+        let live = windows.filter { $0.reset.map { $0 > now } ?? true }
+        return live.isEmpty ? nil : NotchQUsageSnapshot(windows: live)
+    }
+    /// Combines a newer observation with what is displayed, window by window, so two sources that round
+    /// differently (/usage: whole percent; status line: decimals) cannot make the badge step back up.
+    /// - Same period (reset times within `samePeriodTolerance`): the newer figure wins, but remaining does not
+    ///   step up by a rounding-sized amount (`roundingSlack`). A larger rise is a real change and is shown.
+    /// - Different or unknown period: the newer figure is taken as is.
+    /// - A displayed window the newer observation lacks is kept until its reset time passes.
+    static func notchQMerged(current: NotchQUsageSnapshot?, incoming: NotchQUsageSnapshot, now: Date = Date()) -> NotchQUsageSnapshot? {
+        let previous = current?.notchQUnexpired(now: now)?.windows ?? []
+        var windows = (incoming.notchQUnexpired(now: now)?.windows ?? []).map { window -> NotchQUsageWindow in
+            guard let old = previous.first(where: { $0.minutes == window.minutes }), let oldReset = old.reset, let reset = window.reset,
+                  abs(reset.timeIntervalSince(oldReset)) <= samePeriodTolerance, old.remaining < window.remaining, window.remaining - old.remaining <= roundingSlack else { return window }
+            return NotchQUsageWindow(remaining: old.remaining, minutes: window.minutes, reset: window.reset, resetDescription: window.resetDescription)
+        }
+        // Without a reset time there is no way to know when a carried-over window stops being current.
+        windows += previous.filter { old in old.reset != nil && !windows.contains { $0.minutes == old.minutes } }
         return windows.isEmpty ? nil : NotchQUsageSnapshot(windows: windows)
     }
 }
@@ -66,6 +100,8 @@ struct NotchQUsageState {
     /// During a short rate limit the last reading stays on the badge until this time (then "—%").
     var holdUntil: Date?
     var holding: Bool { error != nil && snapshot != nil && (holdUntil.map { Date() < $0 } ?? false) }
+    /// The badge figure is a weekly limit that is nearly used up; it pulses while this holds.
+    var pulsing: Bool { (error == nil || holding) && (snapshot?.weeklyNearlyExhausted ?? false) }
     var percentage: String { error == nil || holding ? snapshot?.displayWindow.map { "\($0.remaining)%" } ?? "—%" : "—%" }
     mutating func notchQPrepareManualRefresh() { nextAllowed = throttledUntil }
     mutating func notchQRecordSuccess(_ value: NotchQUsageSnapshot, now: Date = Date()) {

@@ -47,7 +47,8 @@ final class NotchQClaudeConnection {
                   let used = window["used_percentage"] as? NSNumber,
                   CFGetTypeID(used) != CFBooleanGetTypeID(), used.doubleValue.isFinite,
                   let reset = window["resets_at"] as? NSNumber,
-                  CFGetTypeID(reset) != CFBooleanGetTypeID(), reset.doubleValue.isFinite else { continue }
+                  CFGetTypeID(reset) != CFBooleanGetTypeID(), reset.doubleValue.isFinite,
+                  reset.doubleValue > now.timeIntervalSince1970 else { continue }   // each window may be absent; a passed reset is not current
             let value = max(0, min(100, used.doubleValue))
             windows.append(NotchQUsageWindow(remaining: Int(floor(100 - value)), minutes: duration,
                                             reset: Date(timeIntervalSince1970: reset.doubleValue)))
@@ -66,18 +67,23 @@ final class NotchQClaudeConnection {
         return NotchQClaudeReading(snapshot: NotchQUsageSnapshot(windows: windows), observedAt: now,
                                   fingerprint: bytes.base64EncodedString())
     }
+    /// Stores one status-line payload. A payload without usable `rate_limits` (every new session sends
+    /// one before its first reply) is ignored and leaves the stored reading alone. A payload with a single
+    /// window keeps the other window from the stored reading while that window's reset time is still ahead.
     @discardableResult
     func notchQIngest(_ payload: [String: Any], now: Date = Date()) throws -> NotchQClaudeReading {
-        guard let incoming = Self.notchQParseStatusLine(payload, now: now) else { try? FileManager.default.removeItem(at: cacheURL); throw NotchQClaudeConnectionError.invalidData }
+        guard let incoming = Self.notchQParseStatusLine(payload, now: now) else { throw NotchQClaudeConnectionError.invalidData }
         try notchQPrepareDirectory()
         let previous = notchQCachedReading(maximumAge: .infinity, now: now)
         let observed = previous?.fingerprint == incoming.fingerprint ? previous!.observedAt : now
-        let windows = incoming.snapshot.windows.map { window -> [String: Any] in
+        let kept = (previous?.snapshot.windows ?? []).filter { old in !incoming.snapshot.windows.contains { $0.minutes == old.minutes } }
+        let snapshot = NotchQUsageSnapshot(windows: incoming.snapshot.windows + kept)
+        let windows = snapshot.windows.map { window -> [String: Any] in
             ["remaining": window.remaining, "minutes": window.minutes!, "reset": window.reset!.timeIntervalSince1970]
         }
         try notchQWriteJSON(["version": 1, "observedAt": observed.timeIntervalSince1970,
                             "fingerprint": incoming.fingerprint, "windows": windows], to: cacheURL)
-        return NotchQClaudeReading(snapshot: incoming.snapshot, observedAt: observed, fingerprint: incoming.fingerprint)
+        return NotchQClaudeReading(snapshot: snapshot, observedAt: observed, fingerprint: incoming.fingerprint)
     }
     func notchQCachedReading(maximumAge: TimeInterval = NotchQPreferences.claudeMaximumAge,
                             now: Date = Date()) -> NotchQClaudeReading? {
@@ -91,7 +97,8 @@ final class NotchQClaudeConnection {
         let windows = values.compactMap { value -> NotchQUsageWindow? in
             guard let remaining = value["remaining"] as? Int, (0...100).contains(remaining),
                   let minutes = value["minutes"] as? Int, [300, 10080].contains(minutes),
-                  let reset = value["reset"] as? Double, reset.isFinite else { return nil }
+                  let reset = value["reset"] as? Double, reset.isFinite,
+                  reset > now.timeIntervalSince1970 else { return nil }   // a window past its reset is dropped
             return NotchQUsageWindow(remaining: remaining, minutes: minutes, reset: Date(timeIntervalSince1970: reset))
         }
         guard !windows.isEmpty else { return nil }

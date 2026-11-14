@@ -27,12 +27,39 @@ func runNotchQChecks() {
     notchQAssert(NotchQUsageSnapshot.notchQParseCodexLimits(["rateLimits": ["limitId": "other", "primary": ["usedPercent": 80]]]) == nil, "no other bucket")
     notchQAssert(NotchQUsageSnapshot.notchQParseCodexLimits(notchQFixture(47))?.windows.first?.label == "Weekly", "window labeling")
     let fiveHour = NotchQUsageWindow(remaining: 99, minutes: 300, reset: nil)
-    let weekly = NotchQUsageWindow(remaining: 3, minutes: 10080, reset: nil)
+    let weekly = NotchQUsageWindow(remaining: 13, minutes: 10080, reset: nil)
     for windows in [[weekly, fiveHour], [fiveHour, weekly]] {
         let selected = NotchQUsageSnapshot(windows: windows).displayWindow
         notchQAssert(selected?.remaining == 99 && selected?.minutes == 300, "five-hour headline wins even when weekly is lower")
     }
-    notchQAssert(NotchQUsageSnapshot(windows: [weekly]).displayWindow?.remaining == 3, "weekly headline fallback")
+    notchQAssert(NotchQUsageSnapshot(windows: [weekly]).displayWindow?.remaining == 13, "weekly headline fallback")
+    // Weekly takes over the badge once less than 5% of it is left: that limit will stop the user first.
+    func shown(_ five: Int?, _ week: Int?) -> NotchQUsageSnapshot {
+        NotchQUsageSnapshot(windows: (five.map { [NotchQUsageWindow(remaining: $0, minutes: 300, reset: nil)] } ?? []) + (week.map { [NotchQUsageWindow(remaining: $0, minutes: 10080, reset: nil)] } ?? []))
+    }
+    notchQAssert(NotchQUsageSnapshot.weeklyTakeoverBelow == 5, "one named threshold")
+    notchQAssert(shown(60, 4).displayWindow?.minutes == 10080 && shown(60, 4).displayWindow?.remaining == 4 && shown(60, 4).weeklyNearlyExhausted, "weekly 4% with 5-hour 60% shows weekly")
+    notchQAssert(shown(60, 0).displayWindow?.minutes == 10080 && shown(2, 4).displayWindow?.remaining == 4, "weekly below the threshold wins whatever the 5-hour figure")
+    notchQAssert(shown(60, 5).displayWindow?.minutes == 300 && shown(60, 5).displayWindow?.remaining == 60 && !shown(60, 5).weeklyNearlyExhausted, "weekly 5% shows the 5-hour figure as before")
+    notchQAssert(shown(nil, 40).displayWindow?.remaining == 40 && !shown(nil, 40).weeklyNearlyExhausted && shown(nil, 3).displayWindow?.remaining == 3 && shown(nil, 3).weeklyNearlyExhausted, "weekly-only accounts show weekly as before")
+    notchQAssert(shown(2, nil).displayWindow?.minutes == 300 && !shown(2, nil).weeklyNearlyExhausted, "without a weekly window nothing changes")
+    // The shape Codex really sends for a Plus plan (14 Nov 2026): 5-hour as primary, weekly as secondary.
+    // Windows are told apart by their length, never by position, so the reverse order reads the same.
+    for (first, second) in [("primary", "secondary"), ("secondary", "primary")] {
+        let plus = NotchQUsageSnapshot.notchQParseCodexLimits(["rateLimits": ["limitId": "codex", "planType": "plus", first: ["usedPercent": 11, "windowDurationMins": 300, "resetsAt": 1794600000], second: ["usedPercent": 37, "windowDurationMins": 10080, "resetsAt": 1795000000]]])
+        notchQAssert(plus?.windows.count == 2 && plus?.displayWindow?.minutes == 300 && plus?.displayWindow?.remaining == 89 && plus?.weeklyNearlyExhausted == false, "Codex Plus: the 5-hour figure is shown while weekly has 5% or more (\(first) first)")
+    }
+    let weeklyOnlyCodex = NotchQUsageSnapshot.notchQParseCodexLimits(["rateLimits": ["limitId": "codex", "primary": ["usedPercent": 37, "windowDurationMins": 10080]]])
+    notchQAssert(weeklyOnlyCodex?.displayWindow?.minutes == 10080 && weeklyOnlyCodex?.displayWindow?.remaining == 63, "a weekly-only Codex plan shows weekly, even when it arrives as primary")
+    let codexNearly = NotchQUsageSnapshot.notchQParseCodexLimits(["rateLimits": ["limitId": "codex", "primary": ["usedPercent": 40, "windowDurationMins": 300], "secondary": ["usedPercent": 96, "windowDurationMins": 10080]]])
+    notchQAssert(codexNearly?.displayWindow?.label == "Weekly" && codexNearly?.displayWindow?.remaining == 4, "Codex follows the rule")
+    let claudeNearly = NotchQClaudeConnection.notchQParseStatusLine(["rate_limits": ["five_hour": ["used_percentage": 40, "resets_at": 5000], "seven_day": ["used_percentage": 96.5, "resets_at": 9000]]], now: Date(timeIntervalSince1970: 1000))?.snapshot
+    notchQAssert(claudeNearly?.displayWindow?.label == "Weekly" && claudeNearly?.displayWindow?.remaining == 3, "Claude follows the rule")
+    var pulse = NotchQUsageState()
+    notchQAssert(!pulse.pulsing, "no reading, no pulse")
+    pulse.notchQRecordSuccess(shown(60, 4)); notchQAssert(pulse.pulsing && pulse.percentage == "4%", "the badge figure is the weekly one and pulses")
+    pulse.notchQRecordFailure("Offline"); notchQAssert(!pulse.pulsing && pulse.percentage == "—%", "no pulse without a figure on the badge")
+    pulse.notchQRecordSuccess(shown(60, 5)); notchQAssert(!pulse.pulsing && pulse.percentage == "60%", "the pulse ends when weekly is back at 5% or more")
     notchQAssert(NotchQUsageSnapshot(windows: [NotchQUsageWindow(remaining: 0, minutes: 300, reset: nil), weekly]).displayWindow?.remaining == 0, "zero five-hour value remains selected")
     notchQAssert(NotchQUsageSnapshot(windows: [NotchQUsageWindow(remaining: 100, minutes: 300, reset: nil), weekly]).displayWindow?.remaining == 100, "full five-hour value remains selected")
     notchQAssert(NotchQUsageSnapshot(windows: []).displayWindow == nil, "empty snapshot is unavailable")
@@ -201,6 +228,7 @@ func runNotchQLifecycleChecks(_ server: URL) {
     let savedDefaults = defaults.persistentDomain(forName: domain)
     defer { if let saved = savedDefaults { defaults.setPersistentDomain(saved, forName: domain) } else { defaults.removePersistentDomain(forName: domain) } }
     defaults.set(true, forKey: "codexEnabled"); defaults.set(true, forKey: "claudeEnabled"); defaults.set(false, forKey: "onlyRunningApps")
+    defaults.set(true, forKey: "preferNotchPosition")   // a test that stopped midway must not leave this suite on the menu-bar placement
     let connection = NotchQClaudeConnection(directory: directory, configuration: directory.appendingPathComponent("settings.json"))
     let delegate = NotchQAppDelegate(claudeConnection: connection)
     delegate.testingLifecycle = true
