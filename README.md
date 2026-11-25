@@ -5,9 +5,11 @@
 
 # NotchQ
 
-**Bv0.4.0 Beta** · [Download for Mac](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.4.0)
+**Bv0.4.1 Beta** · [Download for Mac](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.4.1)
 
 A small native Mac app that keeps your remaining AI allowance beside the camera notch. **NotchQ** combines *notch* and *quota*: **AI Notch Quota**.
+
+**New in Bv0.4.1** ([full notes](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.4.1)): the Claude percentage updates again with Claude Code 2.1.331, whose `/usage` screen changed.
 
 **New in Bv0.4.0** ([full notes](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.4.0)):
 
@@ -150,7 +152,7 @@ The badge shows **remaining account allowance**, not a session’s token count o
 
 ## Beta feedback
 
-Report bugs and compatibility results through [GitHub Issues](https://github.com/Xentiles/NotchQ/issues/new/choose); the forms ask for the NotchQ version (shown in **About**, e.g. Bv0.4.0 build 13), macOS version, Mac processor and provider. Remove credentials, private conversations and personal paths from anything you share. See [CONTRIBUTING.md](CONTRIBUTING.md) for what helps most. Pull requests aren't accepted without prior agreement.
+Report bugs and compatibility results through [GitHub Issues](https://github.com/Xentiles/NotchQ/issues/new/choose); the forms ask for the NotchQ version (shown in **About**, e.g. Bv0.4.1 build 14), macOS version, Mac processor and provider. Remove credentials, private conversations and personal paths from anything you share. See [CONTRIBUTING.md](CONTRIBUTING.md) for what helps most. Pull requests aren't accepted without prior agreement.
 
 The quickest way is **Report a Bug…**, in NotchQ's dropdown or at the bottom of Settings. It opens the bug form with your NotchQ version, macOS version, processor and recent log already filled in, and copies the full log to your clipboard in case the form's copy had to be shortened.
 

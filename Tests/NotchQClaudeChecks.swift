@@ -173,6 +173,20 @@ func runNotchQClaudeUsageParserChecks() {
     let renamed = "Settings  Status   Config   Usage   Stats\nCurrent 5-hour limit\n12% 12% used\nResets 6pm (Europe/Stockholm)\nApproaching your 5-hour limit\nWeekly limit (all models)\n30% 30% used\nResets Oct 16 at 6pm (Europe/Stockholm)\nWeekly limit (Sonnet only)\n2% 2% used\nr to refresh · Esc to cancel\n"
     let modern = NotchQClaudeUsageParser.notchQParse(renamed, now: evening)!
     precondition(modern.windows.count == 2 && modern.displayWindow?.remaining == 88 && modern.windows[1].remaining == 70 && modern.windows[1].reset == notchQAt(2026, 10, 16, 18), "5-hour and weekly wording, footer with extra keys, per-model row ignored")
+    // Captured from Claude Code 2.1.331 on 2026-11-25 (folder shortened): footer ends "Esc to close", the cost line
+    // is "Estimated cost:", and new sections with their own percentages follow the weekly limit.
+    let v331 = "[Screen Reader Mode: on via flag]\nClaude Code v2.1.331\nOpus 5.5 with xhigh effort · Claude Pro\n~/Library/Application Support/NotchQ/UsageCheck\nyou: /usage\nSettings  Status   Config   Usage   Stats\nSession\nEstimated cost: $0.0000\nTotal duration (API): 0s\nTotal duration (wall): 12s\nTotal code changes: 0 lines added, 0 lines removed\nUsage: 0 input, 0 output, 0 cache read, 0 cache write\nCurrent session\n34% 34% used\nResets 4:50am (Europe/Stockholm)\nCurrent week (all models)\n25% 25% used\nResets Nov 26 at 4pm (Europe/Stockholm)\nWhat's contributing to your usage?\nApproximate · sessions on this computer only\nLast 24h · shares overlap\n45% See what fills your context · run /context\nMCP servers % of usage\nclaude.ai Gmail 13%\nhearthbot 7%\nclaude.ai Google Calendar 2%\nUsage credits\nUsage credits are off · /usage-credits to turn them on\n←/→ to switch · d to show day · w to show week · Esc to close\n"
+    let night = notchQAt(2026, 11, 25, 2, 20)
+    let current = NotchQClaudeUsageParser.notchQParse(v331, now: night)!
+    precondition(current.windows.count == 2 && current.displayWindow?.remaining == 66 && current.windows[1].remaining == 75, "2.1.331 screen: 66% session and 75% week remaining")
+    precondition(current.windows[0].reset == notchQAt(2026, 11, 25, 4, 50) && current.windows[1].reset == notchQAt(2026, 11, 26, 16), "2.1.331 resets")
+    precondition(NotchQClaudeUsageParser.notchQParse(v331.replacingOccurrences(of: "Esc to close", with: "Esc to cancel"), now: night)?.remaining == 66, "the older footer still works")
+    precondition(NotchQClaudeUsageParser.notchQParse("Current week (all models)\nWhat's contributing to your usage?\nclaude.ai Gmail 13% used\nEsc to close\n") == nil, "a contributing-section percentage is never read as usage")
+    precondition(NotchQClaudeUsageParser.notchQParse("Current week (all models)\nUsage credits\n40% used\nEsc to close\n") == nil, "a usage-credits percentage is never read as usage")
+    let signedOut331 = "Settings  Status   Config   Usage   Stats\nSession\nEstimated cost: $0.0000\nTotal duration (API): 0s\nUsage: 0 input, 0 output, 0 cache read, 0 cache write\nEsc to close\n"
+    if case .noPlanLimits? = NotchQClaudeUsageParser.notchQClassify(signedOut331) {} else { preconditionFailure("2.1.331 signed-out screen has no plan limits") }
+    let unfinished = v331.replacingOccurrences(of: "←/→ to switch · d to show day · w to show week · Esc to close\n", with: "")
+    precondition(NotchQClaudeUsageParser.notchQClassify(unfinished) == nil && NotchQClaudeUsageParser.notchQShowsUsageHeaders(unfinished) && !NotchQClaudeUsageParser.notchQShowsUsageHeaders("Loading usage…"), "limits drawn without a known footer are told apart from a screen still loading")
     for heading in ["5-hour limit", "Current 5-hour window", "Session limit", "Current session"] {
         precondition(NotchQClaudeUsageParser.notchQParse("\(heading)\n7% used\nEsc to cancel\n")?.displayWindow?.minutes == 300, "five-hour heading: \(heading)")
     }
@@ -275,6 +289,10 @@ func runNotchQClaudePollingChecks(_ server: URL) {
     client.notchQStop(wait: true)
     if case .failure(let error) = notchQFetch("layout") { precondition(error.description == NotchQClaudeUsageClient.unrecognizedMessage, "unknown layout is not reported as a timeout") } else { preconditionFailure("unrecognized /usage layout") }
     client.notchQStop(wait: true)
+    if case .success(let value) = notchQFetch("v331") { precondition(value.displayWindow?.remaining == 66 && value.windows.count == 2 && value.windows[1].remaining == 75, "Claude Code 2.1.331 screen") } else { preconditionFailure("Claude Code 2.1.331 /usage screen") }
+    client.notchQStop(wait: true)
+    if case .failure(let error) = notchQFetch("nofooter") { precondition(error.description == NotchQClaudeUsageClient.unrecognizedMessage, "limits without a known footer are a changed layout, not a timeout") } else { preconditionFailure("/usage screen without a known footer") }
+    client.notchQStop(wait: true)
     if case .success(let value) = notchQFetch("split-reset") {
         precondition(value.windows[1].resetDescription == "Oct 16, 6pm (Europe/Stockholm)", "retain reset arriving in a later PTY chunk")
     } else { preconditionFailure("split reset poll") }
@@ -295,6 +313,14 @@ func runNotchQClaudePollingChecks(_ server: URL) {
     let exitEnd = Date().addingTimeInterval(3)
     while exited == nil && Date() < exitEnd { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
     if case .failure(let error) = exited { precondition(error.description.contains("Claude Code closed") && !error.description.contains("Codex"), "Claude exit is not reported as Codex") } else { preconditionFailure("Claude exit fixture") }
+    fresh.notchQStop(wait: true)
+    // Claude Code 2.1.331 prints "Estimated cost:"; the model-activity guard must still stop.
+    try! "cost331".write(to: mode, atomically: true, encoding: .utf8)
+    var costly: Result<NotchQUsageSnapshot, NotchQSourceError>?
+    fresh.notchQFetchUsage { costly = $0 }
+    let costEnd = Date().addingTimeInterval(3)
+    while costly == nil && Date() < costEnd { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+    if case .failure(let error) = costly { precondition(error.description.contains("unexpected model activity"), "Estimated cost line trips the model-activity guard") } else { preconditionFailure("Estimated cost fixture") }
     fresh.notchQStop(wait: true)
     runNotchQManualRefreshChecks(server)
     runNotchQClaudeStatusLineChecks(server)

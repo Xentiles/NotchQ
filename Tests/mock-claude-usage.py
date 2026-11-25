@@ -9,6 +9,7 @@ if mode=='trust':
  print('Accessing workspace: '+os.getcwd()+'\nQuick safety check:\nEnter y/n:',flush=True)
  if sys.stdin.readline().strip()!='y':raise SystemExit(1)
 if mode=='cost':print('Total cost: $0.0030',flush=True)
+if mode=='cost331':print('Estimated cost: $0.0030',flush=True)
 if mode=='numeric429':print('Claude Code v2.1.429\nTotal duration (wall): 4.429s',flush=True)
 def frame(session=1,week=0,footer=True):
  print(f'Current session\n{session}% {session}% used\nResets 6pm (Europe/Stockholm)\nCurrent week (all models)\n{week}% {week}% used',flush=True)
@@ -38,6 +39,12 @@ elif mode=='layout':
  # A screen that finished drawing in a layout this NotchQ version does not know.
  print('Settings  Status   Config   Usage   Stats\nPlan usage\nFive hours: 12 percent of limit\nSeven days: 30 percent of limit\nEsc to cancel',flush=True)
 elif mode=='slow':time.sleep(.2);frame()
+elif mode=='v331':
+ # Captured from Claude Code 2.1.331 (2026-11-25): "Estimated cost:", sections after the limits, footer "Esc to close".
+ print("Settings  Status   Config   Usage   Stats\nSession\nEstimated cost: $0.0000\nCurrent session\n34% 34% used\nResets 4:50am (Europe/Stockholm)\nCurrent week (all models)\n25% 25% used\nResets Nov 26 at 4pm (Europe/Stockholm)\nWhat's contributing to your usage?\n45% See what fills your context \u00b7 run /context\nMCP servers % of usage\nclaude.ai Gmail 13%\nUsage credits\nUsage credits are off \u00b7 /usage-credits to turn them on\n\u2190/\u2192 to switch \u00b7 d to show day \u00b7 w to show week \u00b7 Esc to close",flush=True)
+elif mode=='nofooter':
+ # Limits drawn, but the screen never ends with a footer this NotchQ version knows.
+ frame(footer=False);print('x to exit',flush=True);time.sleep(20);raise SystemExit
 else:frame()
 # Stay alive until the client terminates this owned process after its one response.
 for line in sys.stdin:pass

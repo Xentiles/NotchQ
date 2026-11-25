@@ -68,7 +68,8 @@ struct NotchQClaudeUsageParser {
     static func notchQClassify(_ value: String, now: Date = Date()) -> Screen? {
         let text = notchQPlainText(value).replacingOccurrences(of: "\r", with: "")
         // /usage ends with this screen-reader footer, even for a one-window account.
-        let footer = try! NSRegularExpression(pattern: "(?im)^[^\\n]*\\bEsc to cancel[^\\n]*")
+        // Claude Code 2.1.331 changed its last word from "cancel" to "close".
+        let footer = try! NSRegularExpression(pattern: "(?im)^[^\\n]*\\bEsc to (?:cancel|close)\\b[^\\n]*")
         let endings = footer.matches(in: text, range: NSRange(text.startIndex..., in: text))
         guard let last = endings.last, let end = Range(last.range, in: text) else { return nil }
         let start = endings.dropLast().last.flatMap { Range($0.range, in: text)?.upperBound } ?? text.startIndex
@@ -91,7 +92,11 @@ struct NotchQClaudeUsageParser {
             // A repeated header is a new redraw; never combine it with an older window.
             if minutes == 300 || windows.contains(where: { $0.minutes == minutes }) { windows.removeAll() }
             let stop = index + 1 < matches.count ? Range(matches[index + 1].range, in: frame)!.lowerBound : frame.endIndex
-            let block = String(frame[heading.upperBound..<stop])
+            var block = String(frame[heading.upperBound..<stop])
+            // Sections after the limits (2.1.331: "What's contributing to your usage?", "Usage credits") list
+            // other percentages; they end a window's text so they can never be read as usage.
+            if let tail = sectionEnd.firstMatch(in: block, range: NSRange(block.startIndex..., in: block)),
+               let cut = Range(tail.range, in: block) { block = String(block[..<cut.lowerBound]) }
             let usedRegex = try! NSRegularExpression(pattern: "(?:[0-9]+(?:\\.[0-9]+)?%[ \t]+)?([0-9]+(?:\\.[0-9]+)?)% (used|left|remaining)")
             guard let usedMatch = usedRegex.firstMatch(in: block, range: NSRange(block.startIndex..., in: block)),
                   let usedRange = Range(usedMatch.range(at: 1), in: block), let figure = Double(block[usedRange]),
@@ -104,7 +109,15 @@ struct NotchQClaudeUsageParser {
             windows.append(NotchQUsageWindow(remaining: Int(floor(100 - used)), minutes: minutes, reset: reset.flatMap { notchQResetDate($0, now: now) }, resetDescription: reset))
         }
         if !windows.isEmpty { return .reading(NotchQUsageSnapshot(windows: windows)) }
-        return matches.isEmpty && frame.contains("Total cost:") ? .noPlanLimits : .unrecognized
+        return matches.isEmpty && frame.range(of: costLine, options: .regularExpression) != nil ? .noPlanLimits : .unrecognized
+    }
+    /// The session cost line: "Total cost:" until Claude Code 2.1.331, "Estimated cost:" since.
+    static let costLine = "(?:Total|Estimated) cost:"
+    private static let sectionEnd = try! NSRegularExpression(pattern: "(?im)^(?:What[’']s contributing\\b|Usage credits\\b)")
+    /// Whether usage-limit headers have been drawn, so a screen that never finishes can be told apart from one that never loads.
+    static func notchQShowsUsageHeaders(_ value: String) -> Bool {
+        let text = notchQPlainText(value)
+        return headers.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
     }
     static func notchQParse(_ value: String, now: Date = Date()) -> NotchQUsageSnapshot? {
         if case .reading(let snapshot)? = notchQClassify(value, now: now) { return snapshot }
@@ -160,6 +173,8 @@ final class NotchQClaudeUsageClient {
             switch NotchQClaudeUsageParser.notchQClassify(self.buffer) {
             case .noPlanLimits?: self.notchQComplete(.failure(.rejected(Self.noPlanLimitsMessage, nil)))
             case .unrecognized?: self.notchQComplete(.failure(.rejected(Self.unrecognizedMessage, nil)))
+            // Limits drawn without a footer this version knows: the layout changed, so say that rather than "timed out".
+            case nil where NotchQClaudeUsageParser.notchQShowsUsageHeaders(self.buffer): self.notchQComplete(.failure(.rejected(Self.unrecognizedMessage, nil)))
             default: self.notchQComplete(.failure(.rejected("Claude usage check timed out. Sign in to Claude Code; terminal output may be incompatible. Retrying automatically.", nil)))
             }
         }
@@ -217,7 +232,7 @@ final class NotchQClaudeUsageClient {
         buffer += String(decoding: data, as: UTF8.self)
         guard buffer.utf8.count <= 131_072 else { notchQComplete(.failure(.exited)); return }
         let plain = NotchQClaudeUsageParser.notchQPlainText(buffer)
-        if let regex = try? NSRegularExpression(pattern: "Total cost:\\s+\\$([0-9.]+)"),
+        if let regex = try? NSRegularExpression(pattern: NotchQClaudeUsageParser.costLine + "\\s+\\$([0-9.]+)"),
            let match = regex.firstMatch(in: plain, range: NSRange(plain.startIndex..., in: plain)),
            let range = Range(match.range(at: 1), in: plain), let cost = Double(plain[range]), cost > 0 {
             unexpectedModelActivity = true
