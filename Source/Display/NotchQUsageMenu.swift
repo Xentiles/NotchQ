@@ -24,8 +24,13 @@ func notchQUsageMenuRows(_ state: NotchQUsageState, now: Date = Date(), timeZone
         return left == right ? $0.offset < $1.offset : left < right
     }.map(\.element)
     let prefix = state.error == nil || state.holding ? "" : "Last known "
-    let takeover = state.snapshot?.weeklyNearlyExhausted ?? false
-    rows += windows.map { "\(prefix)\($0.label): \($0.remaining)% left" + (takeover && $0.minutes == 10080 ? " — nearly used up; shown on the badge" : "") }
+    // Any window at or below the warning threshold is marked, and so is the one on the badge (a long window such as
+    // weekly or monthly wins when several are low). Last-known figures are not marked: they are not on the badge.
+    let threshold = NotchQPreferences.lowLimitThreshold, shown = state.snapshot?.notchQDisplayWindow(threshold: threshold)
+    rows += windows.map { window in
+        let low = prefix.isEmpty && NotchQLowLimit(window, threshold: threshold) != nil
+        return "\(prefix)\(window.label): \(window.remaining)% left" + (low ? " — nearly used up" + (window.minutes == shown?.minutes ? "; shown on the badge" : "") : "")
+    }
     let resetFormat = DateFormatter()
     resetFormat.dateStyle = .medium; resetFormat.timeStyle = .short; resetFormat.timeZone = timeZone
     for window in windows {

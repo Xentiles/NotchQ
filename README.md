@@ -5,18 +5,20 @@
 
 # NotchQ
 
-**Bv0.4.1 Beta** · [Download for Mac](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.4.1)
+**Bv0.5.0 Beta** · [Download for Mac](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.5.0)
 
 A small native Mac app that keeps your remaining AI allowance beside the camera notch. **NotchQ** combines *notch* and *quota*: **AI Notch Quota**.
 
-**New in Bv0.4.1** ([full notes](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.4.1)): the Claude percentage updates again with Claude Code 2.1.331, whose `/usage` screen changed.
+**New in Bv0.5.0** ([full notes](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.5.0)):
 
-**New in Bv0.4.0** ([full notes](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.4.0)):
+- **Low-limit warnings.** When a limit has 10% or less left, its figure on the badge blinks. You can set the threshold to 5–25% in Settings.
+- **Two rhythms.** Short limits (5-hour and other limits shorter than a week) fade softly every 2 seconds; long limits (weekly, monthly) dip sharply twice every 1.4 seconds. A low weekly or longer limit takes over the badge, because it is the one that will stop you first.
+- **Reminder cards.** The first time a limit gets low, a card drops from the notch with the figure and the reset time. It stays until you close it with its ✕, once per limit until it resets. An optional macOS notification can come with it; NotchQ then shows a one-time tip for choosing the **Alerts** style so it stays on screen too.
+- **The same rules for every plan.** Whatever windows Codex or Claude reports (5-hour, weekly, the monthly window Codex shows without a subscription, or others), NotchQ shows, warns and reminds the same way, and names the real window ("Codex monthly limit almost used up").
+- **Clearer dropdown colours.** The NotchQ title is drawn in full white, Codex's figures in a light grey and Claude's in its orange, so the information stands apart from the clickable items.
+- **Dynamic Island support (untested).** MacBook Pro models with the camera hole-punch are handled through the same macOS screen-area APIs as the notch; see [Compatibility](#compatibility).
 
-- **Claude usage updates reliably.** If Claude Code is signed out, NotchQ says so and offers **Sign in to Claude Code…**; the optional status-line bridge now updates the badge between the regular checks.
-- **Live dropdown.** Update age, reset countdowns and percentages keep ticking while it is open.
-- **Weekly limit warning.** The badge shows the 5-hour figure; when less than 5% of the weekly allowance is left, the weekly figure takes over and pulses.
-- **Always native on Apple silicon**, never through Rosetta. Intel Macs remain supported.
+Earlier: [Bv0.4.1](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.4.1) kept Claude updating with Claude Code 2.1.331, and [Bv0.4.0](https://github.com/Xentiles/NotchQ/releases/tag/Bv0.4.0) added the Claude sign-in action, the status-line bridge, the live dropdown and native Apple silicon.
 
 NotchQ is an independent project, not affiliated with OpenAI or Anthropic. Codex and Claude are their respective trademarks.
 
@@ -28,7 +30,7 @@ NotchQ is an independent project, not affiliated with OpenAI or Anthropic. Codex
 2. Drag **NotchQ** onto **Applications**.
 3. Open NotchQ from Applications. macOS says it **cannot verify** NotchQ. Click **Done**, not Move to Bin.
 4. Open **System Settings → Privacy & Security**, scroll to **Security**, and click **Open Anyway** next to the NotchQ message. Confirm with **Open Anyway**, and your password if asked. On macOS 13–14 you can instead Control-click NotchQ in Applications and choose **Open**.
-5. The first-run Settings window opens. **Codex and Claude are on by default**, and NotchQ finds their installed command-line tools automatically. **Notch position** is on by default; **Start at login** is your choice.
+5. The first-run Settings window opens. **Codex and Claude are on by default**, and NotchQ finds their installed command-line tools automatically. **Notch position** is on by default; **Start at login** is your choice. Under **Low-limit warnings** you can change the threshold (10% by default) and choose the reminder card and an optional macOS notification.
 
 Step 4 is needed once per version because this beta is not notarized by Apple. Advanced users can instead clear the download flag in Terminal: `xattr -dr com.apple.quarantine /Applications/NotchQ.app`.
 
@@ -54,11 +56,17 @@ NotchQ looks for the `codex` and `claude` command-line tools where their install
 ## How it works
 
 - Fixed 14-point Libron percentages on a shared baseline: **white for Codex**, **orange for Claude**. Natural glyph overshoot and color contrast can affect their apparent size.
-- Headlines use the five-hour allowance when reported, otherwise weekly, then the lowest other available allowance. **When less than 5% of the weekly allowance is left, the weekly figure takes over the badge**, because that limit will stop you first, and that figure pulses (it fades to a quarter of its strength and back every 2 seconds). Only the affected provider’s figure pulses. With macOS **Reduce Motion** on, it is shown steadily dimmed instead. All reported windows remain in the dropdown; the tooltip and the dropdown say which window is on the badge.
+- Headlines use the five-hour allowance when reported, otherwise weekly, then the lowest other available allowance (for example the monthly window Codex reports without a subscription).
+- **Low-limit warnings.** A limit with **10% or less** left (5–25% in **Settings → Low-limit warnings**) is nearly used up, and its figure blinks without changing colour. Every plan follows the same rules, by the length of the window:
+  - **Short limits** (shorter than a week: 5-hour, 1-hour, or a limit of unknown length) fade softly to a quarter of their strength and back every 2 seconds.
+  - **Long limits** (a week or longer: weekly, monthly) dip sharply twice every 1.4 seconds, and **take over the badge**, because that limit will stop you first, even when a short limit is low too. If several limits of the same kind are low, the one with the least left is shown.
+  - Only the affected provider’s figure blinks. With macOS **Reduce Motion** on, it is shown steadily dimmed instead. All reported windows remain in the dropdown; the tooltip and the dropdown say which window is on the badge and that it is nearly used up.
+- **Reminders.** The first time a limit reaches the threshold, a card drops from the notch (or from under the menu bar) naming the real limit ("Claude weekly limit almost used up"), with the figure and the reset time. It stays until you close it with its ✕, and each limit is reminded only once per reset; a card closes by itself when its limit is no longer low. Settings can switch the card off and add a macOS notification; turning that on shows a one-time tip about choosing the **Alerts** style in System Settings → Notifications, so the notification also stays until closed.
 - Enabled providers that are installed (or whose desktop app is running) appear. A detected provider stays visible as **—%** while awaiting a fresh reading or temporarily unavailable, so its dropdown can explain why. Retained values are shown only as last-known details; valid 0% and 100% remain visible.
 - Six-point padding measured from visible glyph bounds, with gentle size and fade transitions respecting macOS Reduce Motion.
 - Default placement follows macOS-reported unobscured screen areas. A standard menu-bar item is used when no suitable notch area exists.
-- Native Settings for provider connections, placement, visibility and optional login startup.
+- Native Settings for provider connections, placement, visibility, low-limit warnings and optional login startup.
+- The dropdown starts with the NotchQ title in full white. Each provider's heading, figures and reset times are drawn in its colour (a light grey for Codex, Claude's orange), a step below the clickable items, while update times and status lines stay faded.
 - Matching dropdown sections show available allowance windows from shortest to longest, their labeled resets, each with a countdown (“in 1 h 54 min”), then the last successful update in `HH:mm:ss` with its age (“35 s ago”). While the dropdown is open these times, the wait until the next check and the percentages keep updating every second. Absent windows stay hidden. Reset times for both providers are shown in your Mac’s current time zone and date format; Claude’s reset text is converted from the zone Claude Code reports. Missing reset information is marked unavailable.
 
 ### Usage sources
@@ -111,12 +119,14 @@ The universal app contains **Apple silicon and Intel** binaries and has a **macO
 | --- | --- |
 | NotchQ | macOS 13+; Apple silicon or Intel. On Apple silicon it always runs natively, never through Rosetta. Verified on an Apple silicon Mac, with Intel fixture checks under Rosetta. Physical Intel Macs and older macOS installations have not been independently tested. |
 | Codex desktop integration | An Apple silicon Mac and an existing Codex sign-in. The [current Codex desktop download](https://learn.chatgpt.com/docs/app) is for Apple silicon. |
-| Codex percentages | A ChatGPT plan with Codex usage limits, such as Plus, Pro or Business ([OpenAI's plan overview](https://learn.chatgpt.com/docs/pricing)). Pro currently has no 5-hour window, so NotchQ shows the weekly allowance. Free and Go (desktop app only), credit-based workspaces and API-key sign-ins may not report limits; NotchQ then shows **—%** and says why. |
+| Codex percentages | A ChatGPT plan with Codex usage limits, such as Plus, Pro or Business ([OpenAI's plan overview](https://learn.chatgpt.com/docs/pricing)). Pro currently has no 5-hour window, so NotchQ shows the weekly allowance. Without a subscription (Free and Go), Codex can report a single monthly window; NotchQ shows it and warns on it like a weekly one. Credit-based workspaces and API-key sign-ins may not report limits; NotchQ then shows **—%** and says why. |
 | Claude usage connection | [Claude Code on macOS 13+](https://code.claude.com/docs/en/setup), on Intel or Apple silicon, signed in with a Pro or Max account. The status-line bridge is optional. Claude Desktop sign-in alone may not authenticate Claude Code. |
 
 Provider requirements can change independently of NotchQ. To show a provider only while its desktop app is open, turn on **Show only running desktop apps**. Claude Free percentages are unavailable. Physical Intel and older-macOS testing remain outstanding.
 
-Placement uses screen geometry rather than model names or a fixed notch width. External displays and Macs without a notch use the standard menu bar. Unreleased hardware and hypothetical future Dynamic Island APIs have not been tested or certified; safe fallback remains available.
+Placement uses screen geometry rather than model names or a fixed notch width. External displays and Macs without a notch use the standard menu bar.
+
+**MacBook Pro with the Dynamic Island.** Models with a small camera hole-punch instead of a notch are supported through the same standard macOS screen-area APIs (the unobscured areas either side of the camera), so the badge sits just left of the island and reminder cards drop from it. This has not been tested on that hardware yet: if you have one, please [report how it looks](https://github.com/Xentiles/NotchQ/issues/new/choose). System animations from the island, such as Siri or Now Playing, may briefly overlap the badge. If macOS reports no usable area beside the camera, NotchQ uses the standard menu bar.
 
 ## Build
 
@@ -152,7 +162,7 @@ The badge shows **remaining account allowance**, not a session’s token count o
 
 ## Beta feedback
 
-Report bugs and compatibility results through [GitHub Issues](https://github.com/Xentiles/NotchQ/issues/new/choose); the forms ask for the NotchQ version (shown in **About**, e.g. Bv0.4.1 build 14), macOS version, Mac processor and provider. Remove credentials, private conversations and personal paths from anything you share. See [CONTRIBUTING.md](CONTRIBUTING.md) for what helps most. Pull requests aren't accepted without prior agreement.
+Report bugs and compatibility results through [GitHub Issues](https://github.com/Xentiles/NotchQ/issues/new/choose); the forms ask for the NotchQ version (shown in **About**, e.g. Bv0.5.0 build 15), macOS version, Mac processor and provider. Remove credentials, private conversations and personal paths from anything you share. See [CONTRIBUTING.md](CONTRIBUTING.md) for what helps most. Pull requests aren't accepted without prior agreement.
 
 The quickest way is **Report a Bug…**, in NotchQ's dropdown or at the bottom of Settings. It opens the bug form with your NotchQ version, macOS version, processor and recent log already filled in, and copies the full log to your clipboard in case the form's copy had to be shortened.
 

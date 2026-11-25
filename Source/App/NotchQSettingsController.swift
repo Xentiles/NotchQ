@@ -21,6 +21,13 @@ final class NotchQSettingsController: NSObject, NSWindowDelegate {
     var onSignInClaude: (() -> Void)?
     var onQuit: (() -> Void)?
     var onReportBug: (() -> Void)?
+    /// The warning threshold or a reminder switch changed (only the display needs updating).
+    var onWarningsChange: (() -> Void)?
+    /// macOS notifications were switched on; the app asks macOS for permission.
+    var onEnableNotifications: (() -> Void)?
+    let threshold = NSPopUpButton(frame: .zero, pullsDown: false)
+    let reminderCard = NSButton(checkboxWithTitle: "Show a reminder card below the notch", target: nil, action: nil)
+    let reminderNotification = NSButton(checkboxWithTitle: "Also send a macOS notification", target: nil, action: nil)
     private let notch = NSButton(checkboxWithTitle: "Place beside the notch", target: nil, action: nil)
     private let running = NSButton(checkboxWithTitle: "Show only running desktop apps", target: nil, action: nil)
     private let login = NSButton(checkboxWithTitle: "Start at login", target: nil, action: nil)
@@ -118,6 +125,18 @@ final class NotchQSettingsController: NSObject, NSWindowDelegate {
         notchQAdd(claudeHelp, to: claudeGroup)
         notchQAdd(claudeGroup)
         notchQAddDivider()
+        let warnings = notchQGroup()
+        notchQAddSection("Low-limit warnings", to: warnings)
+        threshold.addItems(withTitles: NotchQPreferences.lowLimitThresholdChoices.map { "\($0)%" })
+        threshold.target = self; threshold.action = #selector(notchQChangeThreshold)
+        threshold.setAccessibilityLabel("Warning threshold")
+        let thresholdRow = NSStackView(views: [NSTextField(labelWithString: "Warn when a limit has"), threshold, NSTextField(labelWithString: "or less left")])
+        thresholdRow.orientation = .horizontal; thresholdRow.spacing = 6; thresholdRow.alignment = .firstBaseline
+        warnings.addArrangedSubview(thresholdRow)
+        for button in [reminderCard, reminderNotification] { button.target = self; button.action = #selector(notchQChangeReminders(_:)); warnings.addArrangedSubview(button) }
+        notchQAdd(notchQLabel("The figure blinks on the badge: a soft pulse for the 5-hour limit, a sharp double pulse for the weekly limit. If both are low, the badge shows weekly. Each limit is reminded once until it resets; a card stays until you close it."), to: warnings)
+        notchQAdd(warnings)
+        notchQAddDivider()
         let updates = notchQGroup()
         notchQAddSection("Updates", to: updates)
         updateStatus.font = .systemFont(ofSize: 12); updateStatus.textColor = .secondaryLabelColor; notchQAdd(updateStatus, to: updates)
@@ -202,6 +221,7 @@ final class NotchQSettingsController: NSObject, NSWindowDelegate {
         disconnect.isEnabled = connection.isConnected; connect.isEnabled = !connection.isConnected
         disconnect.isHidden = !connection.isConnected; connect.isHidden = connection.isConnected
         refresh.title = refreshing ? "Refreshing…" : "Refresh"; refresh.isEnabled = canRefresh
+        notchQRefreshWarnings()
         notchQRefreshUpdates()
     }
     @objc private func notchQChangePreferences(_ sender: NSButton) {
@@ -213,6 +233,24 @@ final class NotchQSettingsController: NSObject, NSWindowDelegate {
             NotchQPreferences.defaults.set(sender.state == .on, forKey: key)
         }
         notchQRefreshSettings(); onChange?()
+    }
+    func notchQRefreshWarnings() {
+        let value = NotchQPreferences.lowLimitThreshold
+        // A value set outside Settings (defaults write) that is not one of the choices is listed as is.
+        if threshold.item(withTitle: "\(value)%") == nil { threshold.addItem(withTitle: "\(value)%") }
+        threshold.selectItem(withTitle: "\(value)%")
+        reminderCard.state = NotchQPreferences.reminderCardEnabled ? .on : .off
+        reminderNotification.state = NotchQPreferences.reminderNotificationEnabled ? .on : .off
+    }
+    @objc private func notchQChangeThreshold() {
+        guard let title = threshold.titleOfSelectedItem, let value = Int(title.dropLast()), value > 0 else { return }
+        NotchQPreferences.defaults.set(value, forKey: NotchQPreferences.lowLimitThresholdKey)
+        onWarningsChange?()
+    }
+    @objc private func notchQChangeReminders(_ sender: NSButton) {
+        NotchQPreferences.defaults.set(sender.state == .on, forKey: sender === reminderCard ? "lowLimitReminderCard" : "lowLimitReminderNotification")
+        if sender === reminderNotification && sender.state == .on { onEnableNotifications?() }
+        onWarningsChange?()
     }
     @objc private func notchQChooseCLI(_ sender: NSButton) {
         let provider: NotchQProvider = sender.tag == 0 ? .codex : .claude

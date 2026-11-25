@@ -33,33 +33,84 @@ func runNotchQChecks() {
         notchQAssert(selected?.remaining == 99 && selected?.minutes == 300, "five-hour headline wins even when weekly is lower")
     }
     notchQAssert(NotchQUsageSnapshot(windows: [weekly]).displayWindow?.remaining == 13, "weekly headline fallback")
-    // Weekly takes over the badge once less than 5% of it is left: that limit will stop the user first.
+    // Weekly takes over the badge once 10% or less of it is left (the default threshold): that limit will stop the user first.
+    // The tests pin the threshold so a value saved in Settings on this Mac cannot change them.
+    let thresholdDefaults = NotchQPreferences.defaults, savedThreshold = thresholdDefaults.object(forKey: NotchQPreferences.lowLimitThresholdKey)
+    thresholdDefaults.removeObject(forKey: NotchQPreferences.lowLimitThresholdKey)
+    defer { if let saved = savedThreshold { thresholdDefaults.set(saved, forKey: NotchQPreferences.lowLimitThresholdKey) } else { thresholdDefaults.removeObject(forKey: NotchQPreferences.lowLimitThresholdKey) } }
     func shown(_ five: Int?, _ week: Int?) -> NotchQUsageSnapshot {
         NotchQUsageSnapshot(windows: (five.map { [NotchQUsageWindow(remaining: $0, minutes: 300, reset: nil)] } ?? []) + (week.map { [NotchQUsageWindow(remaining: $0, minutes: 10080, reset: nil)] } ?? []))
     }
-    notchQAssert(NotchQUsageSnapshot.weeklyTakeoverBelow == 5, "one named threshold")
-    notchQAssert(shown(60, 4).displayWindow?.minutes == 10080 && shown(60, 4).displayWindow?.remaining == 4 && shown(60, 4).weeklyNearlyExhausted, "weekly 4% with 5-hour 60% shows weekly")
-    notchQAssert(shown(60, 0).displayWindow?.minutes == 10080 && shown(2, 4).displayWindow?.remaining == 4, "weekly below the threshold wins whatever the 5-hour figure")
-    notchQAssert(shown(60, 5).displayWindow?.minutes == 300 && shown(60, 5).displayWindow?.remaining == 60 && !shown(60, 5).weeklyNearlyExhausted, "weekly 5% shows the 5-hour figure as before")
-    notchQAssert(shown(nil, 40).displayWindow?.remaining == 40 && !shown(nil, 40).weeklyNearlyExhausted && shown(nil, 3).displayWindow?.remaining == 3 && shown(nil, 3).weeklyNearlyExhausted, "weekly-only accounts show weekly as before")
-    notchQAssert(shown(2, nil).displayWindow?.minutes == 300 && !shown(2, nil).weeklyNearlyExhausted, "without a weekly window nothing changes")
+    notchQAssert(NotchQPreferences.defaultLowLimitThreshold == 10 && NotchQPreferences.lowLimitThreshold == 10, "one named threshold, 10% by default")
+    thresholdDefaults.set(0, forKey: NotchQPreferences.lowLimitThresholdKey); notchQAssert(NotchQPreferences.lowLimitThreshold == 10, "an unset or invalid threshold falls back to 10%")
+    thresholdDefaults.set(90, forKey: NotchQPreferences.lowLimitThresholdKey); notchQAssert(NotchQPreferences.lowLimitThreshold == 50, "a threshold is capped at 50%")
+    thresholdDefaults.removeObject(forKey: NotchQPreferences.lowLimitThresholdKey)
+    notchQAssert(shown(60, 10).displayWindow?.minutes == 10080 && shown(60, 10).displayWindow?.remaining == 10 && shown(60, 10).weeklyNearlyExhausted, "weekly at exactly 10% with 5-hour 60% shows weekly")
+    notchQAssert(shown(60, 4).displayWindow?.minutes == 10080 && shown(60, 0).displayWindow?.minutes == 10080 && shown(2, 4).displayWindow?.remaining == 4, "weekly at or below the threshold wins whatever the 5-hour figure")
+    notchQAssert(shown(5, 8).displayWindow?.minutes == 10080 && shown(5, 8).displayWindow?.remaining == 8, "both low: the weekly figure wins on the badge")
+    notchQAssert(shown(60, 11).displayWindow?.minutes == 300 && shown(60, 11).displayWindow?.remaining == 60 && !shown(60, 11).weeklyNearlyExhausted, "weekly 11% shows the 5-hour figure")
+    notchQAssert(shown(nil, 40).displayWindow?.remaining == 40 && !shown(nil, 40).weeklyNearlyExhausted && shown(nil, 3).displayWindow?.remaining == 3 && shown(nil, 3).weeklyNearlyExhausted, "weekly-only accounts show weekly")
+    notchQAssert(shown(2, nil).displayWindow?.minutes == 300 && !shown(2, nil).weeklyNearlyExhausted, "without a weekly window the 5-hour figure stays")
+    notchQAssert(shown(60, 15).notchQDisplayWindow(threshold: 20)?.minutes == 10080 && shown(60, 4).notchQDisplayWindow(threshold: 3)?.minutes == 300, "the threshold is adjustable")
+    // Which limit is low, for the blink and the reminders.
+    notchQAssert(NotchQLowLimit(NotchQUsageWindow(remaining: 10, minutes: 300, reset: nil), threshold: 10) == .fiveHour && NotchQLowLimit(NotchQUsageWindow(remaining: 11, minutes: 300, reset: nil), threshold: 10) == nil, "5-hour: 10% left is low, 11% is not")
+    // Every plan and tier: shorter than a week (or unknown length) is the short class, a week or longer the long class.
+    func window(_ remaining: Int, _ minutes: Int?) -> NotchQUsageWindow { NotchQUsageWindow(remaining: remaining, minutes: minutes, reset: nil) }
+    notchQAssert(NotchQLowLimit(window(0, 10080), threshold: 10) == .weekly && NotchQLowLimit(window(9, 43200), threshold: 10) == .weekly && NotchQLowLimit(window(9, 20160), threshold: 10) == .weekly, "a week or longer (weekly, monthly, …): the long class")
+    notchQAssert(NotchQLowLimit(window(3, 60), threshold: 10) == .fiveHour && NotchQLowLimit(window(3, 1440), threshold: 10) == .fiveHour && NotchQLowLimit(window(3, nil), threshold: 10) == .fiveHour && NotchQLowLimit(window(11, 60), threshold: 10) == nil, "shorter than a week, or unknown length: the short class")
+    notchQAssert(window(1, 43200).label == "Monthly" && window(1, 10080).label == "Weekly" && window(1, 300).label == "5-hour" && window(1, 60).label == "1-hour" && window(1, 90).label == "90-minute" && window(1, nil).label == "Allowance", "window labels")
+    notchQAssert(window(1, 43200).spokenName == "monthly" && window(1, 300).spokenName == "5-hour" && window(1, nil).spokenName == "usage", "how a window is named in sentences")
+    for label in ["Weekly", "Monthly", "Allowance", "5-hour", "1-hour", "90-minute"] {
+        notchQAssert(NotchQAppDelegate.notchQMenuRowIsTinted("\(label): 9% left") && NotchQAppDelegate.notchQMenuRowIsTinted("\(label) resets: Dec 1"), "the \(label) rows are tinted in the menu")
+    }
+    // Codex without a subscription: a single 720-hour (monthly) window.
+    let monthly = { (left: Int) in NotchQUsageSnapshot(windows: [NotchQUsageWindow(remaining: left, minutes: 43200, reset: nil)]) }
+    var monthlyState = NotchQUsageState(); monthlyState.notchQRecordSuccess(monthly(50))
+    notchQAssert(monthly(50).displayWindow?.remaining == 50 && !monthly(50).weeklyNearlyExhausted && monthlyState.lowLimit == nil && monthly(50).notchQLowWindows(threshold: 10).isEmpty && monthlyState.percentage == "50%", "monthly-only at 50%: shown, no warning")
+    monthlyState.notchQRecordSuccess(monthly(10))
+    let monthlyLow = monthly(10).notchQLowWindows(threshold: 10)
+    notchQAssert(monthlyState.lowLimit == .weekly && monthly(10).weeklyNearlyExhausted && monthly(10).displayWindow?.minutes == 43200 && monthlyState.percentage == "10%", "monthly-only at 10%: the long class, on the badge")
+    notchQAssert(monthlyLow.count == 1 && monthlyLow[0].limit == .weekly && monthlyLow[0].window.minutes == 43200 && monthlyLow[0].window.label == "Monthly", "monthly-only at 10%: one long-class low window")
+    notchQAssert(NotchQReminder(provider: .codex, limit: .weekly, window: monthlyLow[0].window).title == "Codex monthly limit almost used up", "the reminder names the monthly limit")
+    let fiveAndMonth = NotchQUsageSnapshot(windows: [window(4, 300), window(9, 43200)])
+    notchQAssert(fiveAndMonth.displayWindow?.minutes == 43200 && fiveAndMonth.notchQLowWindows(threshold: 10).map(\.limit) == [.fiveHour, .weekly], "5-hour and monthly both low: monthly wins the badge; both remind")
+    let longs = NotchQUsageSnapshot(windows: [window(8, 10080), window(5, 43200)])
+    notchQAssert(longs.displayWindow?.minutes == 43200 && longs.notchQLowWindows(threshold: 10).map(\.window.minutes) == [43200], "several long windows low: the one with the least left")
+    // A 1-hour window and an unknown-length allowance warn softly; a low long window still beats them.
+    let hour = NotchQUsageSnapshot(windows: [window(6, 60), window(70, 10080)])
+    notchQAssert(hour.displayWindow?.minutes == 60 && NotchQLowLimit(hour.displayWindow!, threshold: 10) == .fiveHour && hour.notchQLowWindows(threshold: 10).map(\.limit) == [.fiveHour], "1-hour at 6%: soft class, shown on the badge")
+    notchQAssert(NotchQReminder(provider: .codex, limit: .fiveHour, window: window(6, 60)).title == "Codex 1-hour limit almost used up", "the reminder names the 1-hour limit")
+    let allowance = NotchQUsageSnapshot(windows: [window(7, nil)])
+    notchQAssert(allowance.displayWindow?.remaining == 7 && NotchQLowLimit(allowance.displayWindow!, threshold: 10) == .fiveHour && NotchQReminder(provider: .codex, limit: .fiveHour, window: window(7, nil)).title == "Codex usage limit almost used up", "an unknown-length allowance warns softly as a usage limit")
+    notchQAssert(NotchQUsageSnapshot(windows: [window(6, 60), window(9, 10080)]).displayWindow?.minutes == 10080 && NotchQUsageSnapshot(windows: [window(60, 300), window(40, 10080)]).displayWindow?.minutes == 300, "a low long window beats a low short one; nothing low: the 5-hour fallback")
+    notchQAssert(shown(5, 8).notchQLowWindows(threshold: 10).map(\.limit) == [.fiveHour, .weekly] && shown(5, 40).notchQLowWindows(threshold: 10).map(\.limit) == [.fiveHour] && shown(50, 40).notchQLowWindows(threshold: 10).isEmpty, "every low window is listed, badge or not")
     // The shape Codex really sends for a Plus plan (14 Nov 2026): 5-hour as primary, weekly as secondary.
     // Windows are told apart by their length, never by position, so the reverse order reads the same.
     for (first, second) in [("primary", "secondary"), ("secondary", "primary")] {
         let plus = NotchQUsageSnapshot.notchQParseCodexLimits(["rateLimits": ["limitId": "codex", "planType": "plus", first: ["usedPercent": 11, "windowDurationMins": 300, "resetsAt": 1794600000], second: ["usedPercent": 37, "windowDurationMins": 10080, "resetsAt": 1795000000]]])
-        notchQAssert(plus?.windows.count == 2 && plus?.displayWindow?.minutes == 300 && plus?.displayWindow?.remaining == 89 && plus?.weeklyNearlyExhausted == false, "Codex Plus: the 5-hour figure is shown while weekly has 5% or more (\(first) first)")
+        notchQAssert(plus?.windows.count == 2 && plus?.displayWindow?.minutes == 300 && plus?.displayWindow?.remaining == 89 && plus?.weeklyNearlyExhausted == false, "Codex Plus: the 5-hour figure is shown while weekly is above the threshold (\(first) first)")
     }
     let weeklyOnlyCodex = NotchQUsageSnapshot.notchQParseCodexLimits(["rateLimits": ["limitId": "codex", "primary": ["usedPercent": 37, "windowDurationMins": 10080]]])
     notchQAssert(weeklyOnlyCodex?.displayWindow?.minutes == 10080 && weeklyOnlyCodex?.displayWindow?.remaining == 63, "a weekly-only Codex plan shows weekly, even when it arrives as primary")
-    let codexNearly = NotchQUsageSnapshot.notchQParseCodexLimits(["rateLimits": ["limitId": "codex", "primary": ["usedPercent": 40, "windowDurationMins": 300], "secondary": ["usedPercent": 96, "windowDurationMins": 10080]]])
-    notchQAssert(codexNearly?.displayWindow?.label == "Weekly" && codexNearly?.displayWindow?.remaining == 4, "Codex follows the rule")
-    let claudeNearly = NotchQClaudeConnection.notchQParseStatusLine(["rate_limits": ["five_hour": ["used_percentage": 40, "resets_at": 5000], "seven_day": ["used_percentage": 96.5, "resets_at": 9000]]], now: Date(timeIntervalSince1970: 1000))?.snapshot
-    notchQAssert(claudeNearly?.displayWindow?.label == "Weekly" && claudeNearly?.displayWindow?.remaining == 3, "Claude follows the rule")
+    let codexNearly = NotchQUsageSnapshot.notchQParseCodexLimits(["rateLimits": ["limitId": "codex", "primary": ["usedPercent": 40, "windowDurationMins": 300], "secondary": ["usedPercent": 91, "windowDurationMins": 10080]]])
+    notchQAssert(codexNearly?.displayWindow?.label == "Weekly" && codexNearly?.displayWindow?.remaining == 9, "Codex follows the rule")
+    let claudeNearly = NotchQClaudeConnection.notchQParseStatusLine(["rate_limits": ["five_hour": ["used_percentage": 40, "resets_at": 5000], "seven_day": ["used_percentage": 92.5, "resets_at": 9000]]], now: Date(timeIntervalSince1970: 1000))?.snapshot
+    notchQAssert(claudeNearly?.displayWindow?.label == "Weekly" && claudeNearly?.displayWindow?.remaining == 7, "Claude follows the rule")
     var pulse = NotchQUsageState()
-    notchQAssert(!pulse.pulsing, "no reading, no pulse")
-    pulse.notchQRecordSuccess(shown(60, 4)); notchQAssert(pulse.pulsing && pulse.percentage == "4%", "the badge figure is the weekly one and pulses")
-    pulse.notchQRecordFailure("Offline"); notchQAssert(!pulse.pulsing && pulse.percentage == "—%", "no pulse without a figure on the badge")
-    pulse.notchQRecordSuccess(shown(60, 5)); notchQAssert(!pulse.pulsing && pulse.percentage == "60%", "the pulse ends when weekly is back at 5% or more")
+    notchQAssert(!pulse.pulsing && pulse.lowLimit == nil, "no reading, no pulse")
+    pulse.notchQRecordSuccess(shown(60, 4)); notchQAssert(pulse.lowLimit == .weekly && pulse.percentage == "4%", "the badge figure is the weekly one and blinks with the weekly rhythm")
+    pulse.notchQRecordSuccess(shown(7, 40)); notchQAssert(pulse.lowLimit == .fiveHour && pulse.percentage == "7%", "a low 5-hour figure blinks with the 5-hour rhythm")
+    pulse.notchQRecordSuccess(shown(7, 9)); notchQAssert(pulse.lowLimit == .weekly && pulse.percentage == "9%", "both low: weekly wins, with its rhythm")
+    pulse.notchQRecordFailure("Offline"); notchQAssert(!pulse.pulsing && pulse.lowLimit == nil && pulse.percentage == "—%", "no pulse without a figure on the badge")
+    pulse.notchQRecordSuccess(shown(60, 11)); notchQAssert(!pulse.pulsing && pulse.percentage == "60%", "the pulse ends when both limits are above the threshold")
+    notchQAssert(NotchQPulseRhythm.notchQFor(.fiveHour) == .fiveHour && NotchQPulseRhythm.notchQFor(.weekly) == .weekly && NotchQPulseRhythm.fiveHour != NotchQPulseRhythm.weekly, "each limit has its own rhythm")
+    notchQAssert(NotchQPulseRhythm.weekly.duration < NotchQPulseRhythm.fiveHour.duration && NotchQPulseRhythm.weekly.lowestOpacity < NotchQPulseRhythm.fiveHour.lowestOpacity, "the weekly blink is faster and stronger than the 5-hour one")
+    notchQAssert(NotchQPulseRhythm.fiveHour.opacities.filter { $0 < 0.5 }.count == 1 && NotchQPulseRhythm.weekly.opacities.filter { $0 < 0.5 }.count == 2, "a single soft pulse vs a double pulse")
+    for rhythm in [NotchQPulseRhythm.fiveHour, .weekly] {
+        notchQAssert(rhythm.opacities.count == rhythm.keyTimes.count && rhythm.easing.count == rhythm.keyTimes.count - 1 && rhythm.keyTimes.first == 0 && rhythm.keyTimes.last == 1 && zip(rhythm.keyTimes, rhythm.keyTimes.dropFirst()).allSatisfy { $0 < $1 } && rhythm.opacities.first == 1 && rhythm.opacities.last == 1, "a well-formed, seamless loop")
+        notchQAssert(rhythm.easing.filter { $0 != .linear }.count >= rhythm.opacities.filter { $0 < 0.5 }.count * 2, "every fade in and out is eased")
+    }
+    runNotchQReminderLedgerChecks()
     notchQAssert(NotchQUsageSnapshot(windows: [NotchQUsageWindow(remaining: 0, minutes: 300, reset: nil), weekly]).displayWindow?.remaining == 0, "zero five-hour value remains selected")
     notchQAssert(NotchQUsageSnapshot(windows: [NotchQUsageWindow(remaining: 100, minutes: 300, reset: nil), weekly]).displayWindow?.remaining == 100, "full five-hour value remains selected")
     notchQAssert(NotchQUsageSnapshot(windows: []).displayWindow == nil, "empty snapshot is unavailable")
@@ -108,6 +159,24 @@ func runNotchQChecks() {
     notchQAssert(NotchQPlacement.notchQFrame(screen: screen, leftArea: nil, rightArea: nil) == nil, "no notch fallback")
     let shifted = NotchQPlacement.notchQFrame(screen: screen.offsetBy(dx: -1710, dy: 100), leftArea: left.offsetBy(dx: -1710, dy: 100), rightArea: right.offsetBy(dx: -1710, dy: 100))!
     notchQAssert(shifted.origin == placement.offsetBy(dx: -1710, dy: 100).origin, "global multi-display coordinates")
+    // MacBook Pro with the Dynamic Island (a small camera hole-punch, no notch): macOS describes it with the same
+    // auxiliary top areas, just with a narrow gap. A 1512×982 screen, a 37 pt menu bar, a 40 pt cutout in the centre.
+    let island = NSRect(x: 0, y: 0, width: 1512, height: 982)
+    let islandLeft = NSRect(x: 0, y: 945, width: 736, height: 37), islandRight = NSRect(x: 776, y: 945, width: 736, height: 37)
+    let dualBadge = NSSize(width: 84, height: 24)
+    let beside = NotchQPlacement.notchQFrame(screen: island, leftArea: islandLeft, rightArea: islandRight, width: dualBadge.width, height: dualBadge.height)!
+    notchQAssert(islandLeft.contains(beside) && beside.maxX == islandLeft.maxX - 8 && beside.midY == islandLeft.midY && beside.size == dualBadge, "Dynamic Island: the badge sits wholly in the left area, 8 pt left of the cutout, centred in the menu bar")
+    notchQAssert(NotchQPlacement.notchQFrame(screen: island, leftArea: NSRect(x: 0, y: 945, width: 80, height: 37), rightArea: islandRight, width: dualBadge.width, height: dualBadge.height) == nil, "a left area narrower than the badge falls back to the menu-bar item")
+    let islandAnchor = NotchQReminderCardController.notchQAnchor(screen: island, visible: NSRect(x: 0, y: 0, width: 1512, height: 945), leftArea: islandLeft, rightArea: islandRight)!
+    let islandCard = NotchQReminderCardController.notchQFrame(index: 0, top: islandAnchor.top, midX: islandAnchor.midX)
+    notchQAssert(islandAnchor.midX == 756 && islandAnchor.notchWidth == 40 && islandAnchor.top == 945 && abs(islandCard.midX - 756) <= 1 && islandCard.maxY <= 945 - NotchQReminderCardController.gap + 0.5 && island.contains(islandCard), "Dynamic Island: cards centre on the cutout and hang below the menu bar")
+    let islandStart = NotchQReminderCardController.notchQStartFrame(islandAnchor)
+    notchQAssert(islandStart.width == NotchQReminderCardController.minimumStartWidth && abs(islandStart.midX - 756) <= 1 && islandStart.maxY == island.maxY, "a 40 pt cutout still starts the card as a visible sliver (at least 60 pt), centred on it")
+    let pinhole = NotchQReminderCardController.notchQAnchor(screen: island, visible: island, leftArea: NSRect(x: 0, y: 945, width: 741, height: 37), rightArea: NSRect(x: 771, y: 945, width: 741, height: 37))!
+    notchQAssert(pinhole.notchWidth == 30 && NotchQReminderCardController.notchQStartFrame(pinhole).width == 60, "a 30 pt cutout: 60 pt sliver")
+    let notchAnchor = NotchQReminderCardController.notchQAnchor(screen: screen, visible: screen, leftArea: left, rightArea: right)!
+    notchQAssert(notchAnchor.notchWidth == 185 && NotchQReminderCardController.notchQStartFrame(notchAnchor).width == 185, "a wide notch keeps its own width")
+    notchQAssert(NotchQReminderCardController.notchQAnchor(screen: island, visible: NSRect(x: 0, y: 0, width: 1512, height: 957), leftArea: nil, rightArea: nil)! == (957, 756, 180, 982), "no housing: cards hang from the menu bar's centre")
     notchQAssert(NotchQProvider.notchQRunning(in: []) == [], "neither running hides badge")
     notchQAssert(NotchQProvider.notchQRunning(in: [NotchQProvider.codex.bundleIdentifier]) == [.codex], "codex only")
     notchQAssert(NotchQProvider.notchQRunning(in: [NotchQProvider.claude.bundleIdentifier]) == [.claude], "claude only")

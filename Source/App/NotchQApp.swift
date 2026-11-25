@@ -57,13 +57,26 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var claudeNeedsSignIn = false
     /// Reduce Motion replaces the pulse with a steady dim. Replaced in tests.
     var reduceMotion: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
-    /// The pulse layer over the standard menu-bar item (the notch badge has its own).
-    let statusPulse = NotchQPulseView()
-    private(set) var statusPulseRanges: [NSRange] = []
-    /// Providers whose badge figure is a weekly limit with less than 5% left; their figure pulses.
-    var pulsingProviders: [NotchQProvider] {
-        sleeping ? [] : displayedProviders.filter { ($0 == .codex ? state : claudeState).pulsing }
+    /// The blinking layers over the standard menu-bar item, one per rhythm (the notch badge has its own);
+    /// `statusPulse` is the weekly one.
+    let statusPulses: [NotchQLowLimit: NotchQPulseView] = [.fiveHour: NotchQPulseView(rhythm: .fiveHour), .weekly: NotchQPulseView(rhythm: .weekly)]
+    var statusPulse: NotchQPulseView { statusPulses[.weekly]! }
+    private(set) var statusPulseRanges: NotchQPulseRanges = [:]
+    /// Providers whose badge figure is a limit at or below the warning threshold, and which limit that is.
+    var pulsingLimits: [NotchQProvider: NotchQLowLimit] {
+        guard !sleeping else { return [:] }
+        let threshold = NotchQPreferences.lowLimitThreshold
+        return displayedProviders.reduce(into: [:]) { result, provider in
+            result[provider] = (provider == .codex ? state : claudeState).notchQLowLimit(threshold: threshold)
+        }
     }
+    var pulsingProviders: [NotchQProvider] { let limits = pulsingLimits; return displayedProviders.filter { limits[$0] != nil } }
+    /// Low-limit reminders: which were already given (once per limit per reset), and where they appear.
+    /// Without cards or a notifier (tests), reminders are only recorded in `deliveredReminders`.
+    var reminderLedger = NotchQReminderLedger(defaults: nil)
+    var reminderCards: NotchQReminderCardController?
+    var reminderNotifier: NotchQReminderNotifier?
+    private(set) var deliveredReminders: [NotchQReminder] = []
     /// The dropdown's time-dependent rows, kept so an open menu can be updated in place every second.
     var menuClock: () -> Date = { Date() }
     private(set) weak var openMenu: NSMenu?
@@ -128,6 +141,12 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         notch = NotchQBadgeController()
         notch?.onClick = { [weak self] in self?.notchQShowBadgeMenu() }
         notch?.reduceMotion = { [weak self] in self?.reduceMotion() ?? false }
+        if !testingLifecycle && !showDiagnostic {
+            reminderLedger = NotchQReminderLedger(defaults: NotchQPreferences.defaults)
+            reminderCards = NotchQReminderCardController()
+            reminderCards?.reduceMotion = { [weak self] in self?.reduceMotion() ?? false }
+            reminderNotifier = NotchQReminderNotifier()
+        }
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(notchQAccessibilityChanged), name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(notchQRecoverDisplay), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         client.onDisconnect = { [weak self] in
@@ -251,14 +270,17 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if reading.holding, let window = reading.snapshot?.displayWindow { return "\(provider.displayName) \(window.label) \(reading.percentage) remaining (last reading; \(reading.error!))" }
             if let error = reading.error { return "\(provider.displayName) usage unavailable: \(error)" }
             guard let window = reading.snapshot?.displayWindow else { return "\(provider.displayName) usage unavailable; awaiting a fresh reading" }
-            return "\(provider.displayName) \(window.label) \(reading.percentage) remaining" + (reading.pulsing ? " (weekly limit nearly used up)" : "")
+            return "\(provider.displayName) \(window.label) \(reading.percentage) remaining" + (reading.lowLimit != nil ? " (\(window.spokenName) limit nearly used up)" : "")
         }.joined(separator: "; ")
         let ranges = notchQProviderRanges(displayed, codex: state.percentage, claude: claudeState.percentage)
-        let pulse = pulsingProviders.compactMap { ranges[$0] }
+        let pulse: NotchQPulseRanges = pulsingLimits.reduce(into: [:]) { result, entry in
+            if let range = ranges[entry.key] { result[entry.value, default: []].append(range) }
+        }
+        let allPulse = pulse.notchQAll.sorted { $0.location < $1.location }
         if showsPlaceholder {
             let image = NSImage(systemSymbolName: "gauge.medium", accessibilityDescription: "NotchQ") ?? NSImage(systemSymbolName: "gauge", accessibilityDescription: "NotchQ")
             image?.isTemplate = true
-            statusPulseRanges = []
+            statusPulseRanges = [:]
             item.button?.image = image; item.button?.attributedTitle = NSAttributedString(string: image == nil ? "NotchQ" : "")
             item.button?.toolTip = "NotchQ: no Codex or Claude usage source found. Click for details."
             item.button?.setAccessibilityLabel("NotchQ"); item.button?.setAccessibilityValue("No usage source found")
@@ -266,19 +288,20 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.button?.image = nil
             // The menu-bar item draws its title itself; a pulsing figure is left out there and drawn by the layer above.
             let title = notchQProviderTitle(displayed, codex: state.percentage, claude: claudeState.percentage, onBlack: false)
-            let shown = pulse.isEmpty ? title : notchQMaskedTitle(title, ranges: pulse, keep: false)
-            if item.button?.attributedTitle.isEqual(to: shown) != true || pulse != statusPulseRanges { statusPulse.needsDisplay = true }
+            let shown = allPulse.isEmpty ? title : notchQMaskedTitle(title, ranges: allPulse, keep: false)
+            if item.button?.attributedTitle.isEqual(to: shown) != true || pulse != statusPulseRanges { statusPulses.values.forEach { $0.needsDisplay = true } }
             statusPulseRanges = pulse
             item.button?.attributedTitle = shown
-            if let button = item.button, statusPulse.superview !== button {
-                statusPulse.frame = button.bounds; statusPulse.autoresizingMask = [.width, .height]; statusPulse.drawsFlipped = button.isFlipped
-                statusPulse.drawContent = { [weak self, weak button] view in
-                    guard let self = self, let button = button, let cell = button.cell as? NSButtonCell, !self.statusPulseRanges.isEmpty else { return }
+            for (limit, layer) in statusPulses {
+                guard let button = item.button, layer.superview !== button else { continue }
+                layer.frame = button.bounds; layer.autoresizingMask = [.width, .height]; layer.drawsFlipped = button.isFlipped
+                layer.drawContent = { [weak self, weak button] view in
+                    guard let self = self, let button = button, let cell = button.cell as? NSButtonCell, let ranges = self.statusPulseRanges[limit], !ranges.isEmpty else { return }
                     // The button's own cell draws the figure, so it lands exactly where the title would put it.
-                    let figure = notchQMaskedTitle(notchQProviderTitle(self.displayedProviders, codex: self.state.percentage, claude: self.claudeState.percentage, onBlack: false), ranges: self.statusPulseRanges, keep: true)
+                    let figure = notchQMaskedTitle(notchQProviderTitle(self.displayedProviders, codex: self.state.percentage, claude: self.claudeState.percentage, onBlack: false), ranges: ranges, keep: true)
                     _ = cell.drawTitle(figure, withFrame: cell.titleRect(forBounds: view.bounds), in: view)
                 }
-                button.addSubview(statusPulse)
+                button.addSubview(layer)
             }
             item.button?.toolTip = names
             item.button?.setAccessibilityLabel("AI usage remaining")
@@ -287,8 +310,54 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         notch?.notchQUpdateBadge(title: notchQProviderTitle(displayed, codex: state.percentage, claude: claudeState.percentage), indicatorCount: displayed.count, tooltip: names, pulse: pulse)
         notchQRepositionBadge()
         notchQTickMenu()   // a reading that arrives while the menu is open shows at once
+        notchQCheckReminders()
         settings?.notchQRefreshSettings(codexMessage: notchQProviderStatusMessage(.codex), claudeMessage: notchQProviderStatusMessage(.claude), refreshing: !manualRefreshPending.isEmpty || client.busy || claudeClient.busy, canRefresh: !sleeping && !providers.isEmpty && manualRefreshPending.isEmpty,
                                         claudeNeedsSignIn: claudeNeedsSignIn && providers.contains(.claude), signingIn: claudeSignIn.waiting)
+    }
+
+    /// Gives each low 5-hour or weekly limit its reminder, once per limit per reset period, and keeps cards
+    /// that are up current. A card is taken down when a current reading shows its limit above the threshold.
+    /// Only current readings count: an error, "—%" or a held reading never reminds.
+    func notchQCheckReminders(now: Date = Date()) {
+        guard !sleeping, !shuttingDown else { return }
+        let threshold = NotchQPreferences.lowLimitThreshold
+        for provider in displayedProviders {
+            let reading = provider == .codex ? state : claudeState
+            guard reading.error == nil, let snapshot = reading.snapshot?.notchQUnexpired(now: now) else { continue }
+            let low = snapshot.notchQLowWindows(threshold: threshold)
+            for limit in NotchQLowLimit.allCases {
+                if let window = low.first(where: { $0.limit == limit })?.window {
+                    let reminder = NotchQReminder(provider: provider, limit: limit, window: window)
+                    if reminderLedger.notchQShouldRemind(provider, limit, reset: window.reset, now: now) { notchQDeliverReminder(reminder) }
+                    else { reminderCards?.notchQRefresh(reminder) }
+                } else {
+                    // Back above the threshold, or no window of this class any more (a plan change, or the period
+                    // ended): its card goes. The ledger re-arms only a period whose reset time is unknown.
+                    reminderLedger.notchQRecovered(provider, limit)
+                    let id = "\(provider.rawValue).\(limit.rawValue)"
+                    if reminderCards?.notchQIsShowing(id) == true { reminderCards?.notchQClose(id: id) }
+                }
+            }
+        }
+    }
+    func notchQDeliverReminder(_ reminder: NotchQReminder) {
+        deliveredReminders.append(reminder)
+        NotchQDiagnostics.shared.record(.lowLimitReminder, provider: reminder.provider, remaining: reminder.remaining, detail: reminder.limit.rawValue)
+        if NotchQPreferences.reminderCardEnabled { reminderCards?.notchQShow(reminder) }
+        if NotchQPreferences.reminderNotificationEnabled { reminderNotifier?.notchQDeliver(reminder) }
+    }
+    /// Settings switched macOS notifications on: ask macOS for permission, then show the Alerts tip once.
+    func notchQEnableReminderNotifications() {
+        guard let notifier = reminderNotifier else { return }
+        notifier.notchQRequestPermission { [weak self] granted in
+            if granted { NotchQReminderNotifier.notchQShowAlertsTipIfNeeded(); return }
+            NotchQPreferences.defaults.set(false, forKey: "lowLimitReminderNotification")
+            self?.settings?.notchQRefreshSettings()
+            let alert = NSAlert(); alert.messageText = "Notifications are off for NotchQ"
+            alert.informativeText = "Allow NotchQ in System Settings → Notifications, then switch this on again. The reminder card below the notch works without it."
+            alert.addButton(withTitle: "Open Notification Settings"); alert.addButton(withTitle: "Cancel")
+            if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(NotchQReminderNotifier.notificationSettingsURL) }
+        }
     }
 
     func notchQUpdateClaudeState() {
@@ -451,6 +520,9 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             controller.onSignInClaude = { [weak self] in self?.notchQSignInClaude() }
             controller.onQuit = { NSApp.terminate(nil) }
             controller.onReportBug = { [weak self] in self?.notchQReportBug() }
+            // Warning settings only change how readings are shown; no new reading is needed.
+            controller.onWarningsChange = { [weak self] in self?.notchQRenderBadge() }
+            controller.onEnableNotifications = { [weak self] in self?.notchQEnableReminderNotifications() }
             settings = controller
         }
         settings?.notchQShowSettings()
@@ -497,6 +569,7 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard !sleeping, !shuttingDown else { return }
         NotchQDiagnostics.shared.record(.recovering)
         notchQRepositionBadge(recovering: true)
+        reminderCards?.notchQLayout()
         for delay in [0.25, 1.0, 2.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let self = self, self.recoveryGeneration == generation, !self.sleeping, !self.shuttingDown else { return }
@@ -506,7 +579,9 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     /// The menu-bar item's pulse runs only while that item is the one on screen and the Mac is awake.
     func notchQSyncStatusPulse() {
-        statusPulse.notchQApply(shown: !statusPulseRanges.isEmpty && !showsPlaceholder, animate: (item?.isVisible ?? false) && !sleeping, reduceMotion: reduceMotion())
+        for (limit, layer) in statusPulses {
+            layer.notchQApply(shown: !(statusPulseRanges[limit] ?? []).isEmpty && !showsPlaceholder, animate: (item?.isVisible ?? false) && !sleeping, reduceMotion: reduceMotion())
+        }
     }
     @objc func notchQAccessibilityChanged() { notchQRenderBadge() }
 
@@ -549,17 +624,23 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         menu.removeAllItems()
-        func notchQMenuInfo(_ title: String) { let row = NSMenuItem(title: title, action: nil, keyEquivalent: ""); row.isEnabled = false; menu.addItem(row) }
+        func notchQMenuInfo(_ title: String, color: NSColor? = nil) {
+            let row = NSMenuItem(title: title, action: nil, keyEquivalent: ""); row.isEnabled = false
+            if let color = color { row.view = NotchQMenuRowView(text: title, color: color) }   // full colour; see NotchQMenuRowView
+            menu.addItem(row)
+        }
         func notchQMenuAction(_ title: String, _ selector: Selector) -> NSMenuItem {
             let row = NSMenuItem(title: title, action: selector, keyEquivalent: ""); row.target = self; menu.addItem(row); return row
         }
-        notchQMenuInfo("NotchQ")
+        notchQMenuInfo("NotchQ", color: NotchQMenuPalette.title)   // full strength, not the greyed-out look of a disabled row
         menu.addItem(.separator())
         liveMenuHeaders.removeAll(); liveMenuRows.removeAll()
         // Each provider's rows are remembered so notchQTickMenu can retitle them while the menu is open.
         func notchQMenuLive(_ provider: NotchQProvider, _ header: String) {
-            notchQMenuInfo(header); liveMenuHeaders[provider] = menu.items.last
-            liveMenuRows[provider] = notchQLiveMenuRows(provider).map { notchQMenuInfo($0); return menu.items.last! }
+            notchQMenuInfo(header, color: Self.notchQMenuColor(provider)); liveMenuHeaders[provider] = menu.items.last
+            liveMenuRows[provider] = notchQLiveMenuRows(provider).map { row in
+                notchQMenuInfo(""); let item = menu.items.last!; Self.notchQSetMenuRow(item, row, provider: provider); return item
+            }
         }
         if providers.contains(.codex) { notchQMenuLive(.codex, "Codex — white") }
         if providers.contains(.claude) {
@@ -595,8 +676,35 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             _ = notchQMenuAction("Open Login Items settings", #selector(notchQOpenLoginSettings))
         }
         menu.addItem(.separator()); _ = notchQMenuAction("Quit", #selector(notchQQuit))
+        Self.notchQAlignMenuRows(menu)
         if menu === item?.menu { menuTracking = true }
         openMenu = menu; notchQStartMenuTimer()
+    }
+
+    /// The dropdown uses the badge's colours (see NotchQMenuPalette): for Codex an opaque light grey (dark grey in a
+    /// light menu, where the badge's own near-white would vanish), for Claude the badge orange as an opaque colour
+    /// with HSB brightness × 0.92. Both sit below the pure white/black "NotchQ" title and the clickable items'
+    /// text and above the faded info rows, so the provider sections read as information, not as clickable items.
+    static func notchQMenuColor(_ provider: NotchQProvider) -> NSColor {
+        provider == .codex ? NotchQMenuPalette.codex : NotchQMenuPalette.claude
+    }
+    /// Lines the coloured view rows up with the standard rows' titles, including the checkmark column when shown.
+    static func notchQAlignMenuRows(_ menu: NSMenu) {
+        let inset = NotchQMenuGeometry.shared.textInset(stateColumn: NotchQMenuGeometry.notchQShowsStateColumn(menu))
+        for case let row as NotchQMenuRowView in menu.items.map(\.view) { row.leftInset = inset }
+    }
+    /// Rows about the limits themselves (current figures and reset times) are tinted; everything else
+    /// (errors, last-known figures, last updated, next check, source) keeps the faded look of an info row.
+    static func notchQMenuRowIsTinted(_ row: String) -> Bool {
+        row.range(of: #"^(Weekly|Monthly|Allowance|\d+-hour|\d+-minute)( resets)?: "#, options: .regularExpression) != nil
+    }
+    static func notchQSetMenuRow(_ item: NSMenuItem, _ row: String, provider: NotchQProvider) {
+        item.title = row
+        if notchQMenuRowIsTinted(row) {
+            // Retitled in place while the menu is open: the same view gets the new text and colour.
+            if let view = item.view as? NotchQMenuRowView { view.text = row; view.color = notchQMenuColor(provider) }
+            else { item.view = NotchQMenuRowView(text: row, color: notchQMenuColor(provider), leftInset: item.menu.map { NotchQMenuGeometry.shared.textInset(stateColumn: NotchQMenuGeometry.notchQShowsStateColumn($0)) } ?? NotchQMenuGeometry.shared.textInset(stateColumn: false)) }
+        } else { item.view = nil; item.attributedTitle = nil; item.title = row }
     }
 
     /// The text rows under a provider's heading, as of the menu clock.
@@ -621,15 +729,17 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let rows = notchQLiveMenuRows(provider)
             var items = liveMenuRows[provider] ?? []
             for (index, row) in rows.enumerated() {
-                if index < items.count { if items[index].title != row { items[index].title = row } }
+                if index < items.count { if items[index].title != row { Self.notchQSetMenuRow(items[index], row, provider: provider) } }
                 else {
                     let item = NSMenuItem(title: row, action: nil, keyEquivalent: ""); item.isEnabled = false
+                    Self.notchQSetMenuRow(item, row, provider: provider)
                     menu.insertItem(item, at: start + 1 + index); items.append(item)
                 }
             }
             while items.count > rows.count { menu.removeItem(items.removeLast()) }
             liveMenuRows[provider] = items
         }
+        Self.notchQAlignMenuRows(menu)
     }
     /// Once a second while the menu is open; common modes, so it also fires while the menu tracks the mouse.
     func notchQStartMenuTimer() {
@@ -702,6 +812,7 @@ final class NotchQAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NotificationCenter.default.removeObserver(self); NSWorkspace.shared.notificationCenter.removeObserver(self)
         timer?.invalidate(); client.notchQStopClient(wait: true); claudeClient.notchQStop(wait: true); claudeSignIn.notchQStop()
         notch?.notchQCloseBadge()
+        reminderCards?.notchQCloseAll()
         settings?.window.close()
         if showDiagnostic { print("shutdown complete; readings=\(diagnosticCount)") }
     }
@@ -740,6 +851,8 @@ struct NotchQApp {
         if CommandLine.arguments.contains("--self-test") {
             runNotchQChecks(); exit(0)
         }
+        // On-screen walk-through of the low-limit blinks and reminder cards with fake readings (Tests/NotchQDemo.swift).
+        if CommandLine.arguments.contains("--demo-low-limits") { runNotchQLowLimitDemo(); exit(0) }
         if let index = CommandLine.arguments.firstIndex(of: "--transport-test"), CommandLine.arguments.count > index + 1 {
             runNotchQTransportChecks(URL(fileURLWithPath: CommandLine.arguments[index + 1])); exit(0)
         }

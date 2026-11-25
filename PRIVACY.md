@@ -84,3 +84,16 @@ NotchQ reads running application identifiers to decide which enabled providers
 to display. It does not read other apps' documents, windows, conversations,
 screenshots, camera or microphone. Preferences are stored locally. Login startup
 uses macOS ServiceManagement and is opt-in for new installations.
+
+## Low-limit reminders
+
+To remind each limit only once per reset, NotchQ keeps a short list in its local
+preferences: which provider and limit kind (short or long) were reminded, and the
+reset time of that period. Periods that ended more than a day earlier are
+dropped whenever a new reminder is recorded, and an entry without a reset time is
+cleared once that limit is no longer low. Nothing else from a reading is stored,
+and the list never leaves this Mac.
+
+The optional macOS notification is off by default. When you turn it on, macOS
+asks for permission once; the notification is created and shown on this Mac by
+macOS and contains only the limit name, the percentage left and the reset time.

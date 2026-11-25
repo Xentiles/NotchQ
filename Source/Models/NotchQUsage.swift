@@ -9,23 +9,65 @@ struct NotchQUsageWindow {
     var label: String {
         guard let minutes = minutes else { return "Allowance" }
         if minutes == 10080 { return "Weekly" }
+        if minutes == 43200 { return "Monthly" }   // e.g. Codex without a subscription
         if minutes % 60 == 0 { return "\(minutes / 60)-hour" }
         return "\(minutes)-minute"
     }
 }
 
+/// A limit that is nearly used up, by class, so every plan and tier behaves the same way. Each class blinks with
+/// its own rhythm and gets its own reminder (once per period).
+/// - `.fiveHour`: the short-window class, any window shorter than a week (5-hour, 1-hour, …) or of unknown
+///   length: the soft pulse.
+/// - `.weekly`: the long-window class, any window of a week or longer (weekly, monthly, …): the sharp double
+///   pulse, and it takes over the badge.
+/// The raw values are kept as the reminder IDs and preference keys they always were.
+enum NotchQLowLimit: String, CaseIterable {
+    case fiveHour, weekly
+    static let fiveHourMinutes = 300, weeklyMinutes = 10080
+    /// The class a window belongs to, whatever its figure.
+    static func notchQClass(_ window: NotchQUsageWindow) -> NotchQLowLimit {
+        (window.minutes ?? 0) >= weeklyMinutes ? .weekly : .fiveHour
+    }
+    /// The low limit a window stands for, if it is at or below `threshold` percent left.
+    init?(_ window: NotchQUsageWindow, threshold: Int) {
+        guard window.remaining <= threshold else { return nil }
+        self = Self.notchQClass(window)
+    }
+}
+
+extension NotchQUsageWindow {
+    /// How the window is named in sentences: "weekly", "monthly", "5-hour", "1-hour"; "usage" when its length is unknown.
+    var spokenName: String { minutes == nil ? "usage" : label.lowercased() }
+}
+
 struct NotchQUsageSnapshot {
     let windows: [NotchQUsageWindow]
     var remaining: Int { windows.map(\.remaining).min()! }
-    /// Below this many percent left, the weekly limit is the one about to stop the user, so it takes
-    /// over the badge from the 5-hour figure (and the figure pulses).
-    static let weeklyTakeoverBelow = 5
-    var weeklyNearlyExhausted: Bool { windows.contains { $0.minutes == 10080 && $0.remaining < Self.weeklyTakeoverBelow } }
-    /// The window the badge shows: the 5-hour one, unless the weekly one is nearly used up.
-    var displayWindow: NotchQUsageWindow? {
-        if weeklyNearlyExhausted, let weekly = windows.first(where: { $0.minutes == 10080 }) { return weekly }
-        return windows.first { $0.minutes == 300 } ?? windows.first { $0.minutes == 10080 }
+    /// The window of a class at or below the threshold with the least left, if any.
+    func notchQLowWindow(_ limit: NotchQLowLimit, threshold: Int = NotchQPreferences.lowLimitThreshold) -> NotchQUsageWindow? {
+        windows.filter { NotchQLowLimit($0, threshold: threshold) == limit }.min { $0.remaining < $1.remaining }
+    }
+    /// At or below the low-limit threshold (Settings; 10% by default), a long limit (weekly, monthly, …) is the
+    /// one about to stop the user, so it takes over the badge. If a short limit is low too, the long one still wins.
+    func notchQWeeklyNearlyExhausted(threshold: Int = NotchQPreferences.lowLimitThreshold) -> Bool {
+        notchQLowWindow(.weekly, threshold: threshold) != nil
+    }
+    var weeklyNearlyExhausted: Bool { notchQWeeklyNearlyExhausted() }
+    /// The window the badge shows: the low long window with the least left; otherwise the low short window with the
+    /// least left; otherwise the 5-hour one, then the weekly one, then whichever has the least left (so a plan with
+    /// only a monthly window shows that).
+    func notchQDisplayWindow(threshold: Int = NotchQPreferences.lowLimitThreshold) -> NotchQUsageWindow? {
+        if let long = notchQLowWindow(.weekly, threshold: threshold) { return long }
+        if let short = notchQLowWindow(.fiveHour, threshold: threshold) { return short }
+        return windows.first { $0.minutes == NotchQLowLimit.fiveHourMinutes } ?? windows.first { $0.minutes == NotchQLowLimit.weeklyMinutes }
             ?? windows.min { $0.remaining < $1.remaining }
+    }
+    var displayWindow: NotchQUsageWindow? { notchQDisplayWindow() }
+    /// For each class, the low window with the least left, whether or not it is the one on the badge
+    /// (each class gets its own reminder).
+    func notchQLowWindows(threshold: Int = NotchQPreferences.lowLimitThreshold) -> [(limit: NotchQLowLimit, window: NotchQUsageWindow)] {
+        NotchQLowLimit.allCases.compactMap { limit in notchQLowWindow(limit, threshold: threshold).map { (limit: limit, window: $0) } }
     }
     static func notchQParseCodexLimits(_ result: [String: Any]) -> NotchQUsageSnapshot? {
         let grouped = result["rateLimitsByLimitId"] as? [String: Any]
@@ -100,8 +142,14 @@ struct NotchQUsageState {
     /// During a short rate limit the last reading stays on the badge until this time (then "—%").
     var holdUntil: Date?
     var holding: Bool { error != nil && snapshot != nil && (holdUntil.map { Date() < $0 } ?? false) }
-    /// The badge figure is a weekly limit that is nearly used up; it pulses while this holds.
-    var pulsing: Bool { (error == nil || holding) && (snapshot?.weeklyNearlyExhausted ?? false) }
+    /// The badge figure is a nearly used-up limit: which one, so it blinks with that limit's rhythm.
+    /// `nil` while no current figure is on the badge.
+    func notchQLowLimit(threshold: Int = NotchQPreferences.lowLimitThreshold) -> NotchQLowLimit? {
+        guard error == nil || holding, let window = snapshot?.notchQDisplayWindow(threshold: threshold) else { return nil }
+        return NotchQLowLimit(window, threshold: threshold)
+    }
+    var lowLimit: NotchQLowLimit? { notchQLowLimit() }
+    var pulsing: Bool { lowLimit != nil }
     var percentage: String { error == nil || holding ? snapshot?.displayWindow.map { "\($0.remaining)%" } ?? "—%" : "—%" }
     mutating func notchQPrepareManualRefresh() { nextAllowed = throttledUntil }
     mutating func notchQRecordSuccess(_ value: NotchQUsageSnapshot, now: Date = Date()) {

@@ -63,6 +63,8 @@ FIRST RUN
 - Codex updates every 10 seconds. Claude updates every 2 minutes,
   because Claude's usage service limits frequent checks.
 - Not detected? Use Choose CLI… in Settings. Not using one? Untick it.
+- When a limit has 10% or less left, its figure blinks and a reminder
+  card drops from the notch. Change this under Low-limit warnings.
 - Start at login is optional.
 TEXT
 

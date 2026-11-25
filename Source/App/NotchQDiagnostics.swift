@@ -10,6 +10,7 @@ final class NotchQDiagnostics {
     enum Event: String {
         case requestStarted, succeeded, failed, snapshot, queued, stopped, sleeping, recovering, notch, menuBar, hidden
         case launched, paused, resumed, detected, updateChecked, updateAvailable, updateInstalling, updateFailed
+        case lowLimitReminder
     }
     /// Why something failed or changed. Stable values, safe to share.
     enum Reason: String {
@@ -72,7 +73,7 @@ final class NotchQDiagnostics {
         case .succeeded, .snapshot:
             let previous = provider.flatMap { lastOutcome[$0] }
             if previous != .succeeded && previous != .snapshot { logger.notice("\(line, privacy: .public)") } else { logger.info("\(line, privacy: .public)") }
-        case .launched, .paused, .resumed, .sleeping, .detected, .updateChecked, .updateAvailable, .updateInstalling:
+        case .launched, .paused, .resumed, .sleeping, .detected, .updateChecked, .updateAvailable, .updateInstalling, .lowLimitReminder:
             logger.notice("\(line, privacy: .public)")
         case .notch, .menuBar, .hidden, .recovering:
             logger.info("\(line, privacy: .public)")

@@ -34,14 +34,79 @@ func runNotchQUsageMenuChecks() {
     let claude = items.firstIndex { $0.title == "Claude — orange" }!
     precondition(items[claude - 1].isSeparatorItem)
     precondition(items[3..<(3 + rows.count)].map(\.title) == items[(claude + 1)..<(claude + 1 + rows.count)].map(\.title), "identical provider section structure")
+    // Colours: the app title at full strength; provider headings, figures and resets in the badge's colours; the rest faded.
+    // Coloured rows are view rows (AppKit dims a disabled item's attributed title); faded rows are plain items.
+    func tint(_ item: NSMenuItem) -> NSColor? { (item.view as? NotchQMenuRowView).map { $0.text == item.title ? $0.color : .clear } }
+    precondition(tint(items[0]) == NotchQMenuPalette.title && items[0].attributedTitle == nil, "the NotchQ title is drawn by its own view in pure white/black, not greyed out")
+    // Provider sections below the title: Codex an opaque light (dark) grey, Claude the badge orange at brightness × 0.92.
+    let codexTint = NotchQMenuPalette.codex, claudeTint = NotchQMenuPalette.claude
+    precondition(tint(items[2]) == codexTint && tint(items[claude]) == claudeTint, "headings: Codex grey, Claude dimmed orange")
+    let claudeRows = items[(claude + 1)..<(claude + 1 + rows.count)]
+    precondition(claudeRows.filter { $0.title.hasPrefix("5-hour") || $0.title.hasPrefix("Weekly") }.allSatisfy { tint($0) == claudeTint } && claudeRows.filter { $0.title.hasPrefix("5-hour") || $0.title.hasPrefix("Weekly") }.count == 4, "Claude's figures and reset times are orange")
+    precondition(items[3..<(3 + rows.count)].filter { $0.title.hasPrefix("5-hour") || $0.title.hasPrefix("Weekly") }.allSatisfy { tint($0) == codexTint }, "Codex's figures and reset times are white")
+    precondition(claudeRows.first { $0.title.hasPrefix("Last updated") }.map { $0.attributedTitle == nil && $0.view == nil } == true && NotchQAppDelegate.notchQMenuRowIsTinted("Weekly resets: Nov 30") && !NotchQAppDelegate.notchQMenuRowIsTinted("Last known 5-hour: 0% left") && !NotchQAppDelegate.notchQMenuRowIsTinted("Next check in 9 seconds") && !NotchQAppDelegate.notchQMenuRowIsTinted("Source: Claude Code status line"), "last updated, next check, source and stale figures stay faded")
     let settings = items.firstIndex { $0.title == "Settings…" }!
     precondition(items[settings - 1].isSeparatorItem && items.last!.title == "Quit" && items[items.count - 2].isSeparatorItem)
+    precondition([items[settings], items.last!].allSatisfy { $0.attributedTitle == nil && $0.view == nil && $0.isEnabled }, "Settings… and Quit are ordinary, enabled items at full strength")
     delegate.providers = [.claude]
     delegate.menuWillOpen(menu)
     precondition(menu.items.first { $0.title == "Refresh now" }!.isEnabled, "Claude-only refresh remains available")
+    runNotchQMenuColourChecks()
     runNotchQLiveMenuChecks()
     runNotchQPulseChecks()
+    runNotchQReminderAppChecks()
     print("Passed uniform menu checks: ordering, absent windows, resets, exact update time, stale state, separators and Claude-only refresh")
+}
+
+/// The coloured rows' pixels, in a dark and a light menu: the title pure white/black, Codex opaque grey 0.80 (0.20),
+/// Claude the opaque orange (217, 119, 87) × 0.92. Sampled from what the row view actually draws.
+func runNotchQMenuColourChecks() {
+    _ = NSApplication.shared
+    let geometry = NotchQMenuGeometry.shared
+    precondition(geometry.rowHeight >= 18 && geometry.rowHeight <= 32 && geometry.leadingPadding > 4 && geometry.stateColumn >= 0, "standard row measurements read from AppKit (\(geometry))")
+    let checked = NSMenu(); checked.addItem(NSMenuItem(title: "a", action: nil, keyEquivalent: "")); let on = NSMenuItem(title: "b", action: nil, keyEquivalent: ""); on.state = .on; checked.addItem(on)
+    let unchecked = NSMenu(); unchecked.addItem(NSMenuItem(title: "a", action: nil, keyEquivalent: "")); let off = NSMenuItem(title: "b", action: nil, keyEquivalent: ""); off.state = .off; unchecked.addItem(off)
+    precondition(NotchQMenuGeometry.notchQShowsStateColumn(checked) && !NotchQMenuGeometry.notchQShowsStateColumn(unchecked), "the checkmark column only when an item is on")
+    /// The glyph colour: the un-premultiplied colour of the most covered pixels, and that coverage.
+    func sample(_ color: NSColor, _ appearance: NSAppearance.Name, text: String = "NotchQ Weekly: 4% left") -> (r: Int, g: Int, b: Int, alpha: CGFloat) {
+        let view = NotchQMenuRowView(text: text, color: color, leftInset: geometry.textInset(stateColumn: true))
+        view.appearance = NSAppearance(named: appearance)
+        precondition(view.frame.height == geometry.rowHeight && view.frame.width > geometry.textInset(stateColumn: true) + 40, "view rows are standard height and fit their text")
+        let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        var best: [NSColor] = [], top: CGFloat = 0
+        for y in 0..<bitmap.pixelsHigh { for x in 0..<bitmap.pixelsWide {
+            guard let pixel = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), pixel.alphaComponent > 0.01 else { continue }
+            if pixel.alphaComponent > top + 0.001 { top = pixel.alphaComponent; best = [pixel] } else if abs(pixel.alphaComponent - top) <= 0.001 { best.append(pixel) }
+        } }
+        precondition(!best.isEmpty, "something was drawn")
+        func average(_ part: (NSColor) -> CGFloat) -> Int { Int((best.map(part).reduce(0, +) / CGFloat(best.count) * 255).rounded()) }
+        return (average(\.redComponent), average(\.greenComponent), average(\.blueComponent), top)
+    }
+    func close(_ got: (r: Int, g: Int, b: Int, alpha: CGFloat), _ want: (Int, Int, Int), alpha: CGFloat) -> Bool {
+        abs(got.r - want.0) <= 2 && abs(got.g - want.1) <= 2 && abs(got.b - want.2) <= 2 && abs(got.alpha - alpha) <= 0.02
+    }
+    let claudeTarget = (Int((217 * 0.92).rounded()), Int((119 * 0.92).rounded()), Int((87 * 0.92).rounded()))
+    var report: [String] = []
+    for (name, dark) in [(NSAppearance.Name.darkAqua, true), (.aqua, false)] {
+        let title = sample(NotchQMenuPalette.title, name), codex = sample(NotchQMenuPalette.codex, name), claude = sample(NotchQMenuPalette.claude, name)
+        let ink = dark ? (255, 255, 255) : (0, 0, 0), grey = dark ? 204 : 51
+        precondition(close(title, ink, alpha: 1), "title is pure \(dark ? "white" : "black") in a \(dark ? "dark" : "light") menu: \(title)")
+        precondition(close(codex, (grey, grey, grey), alpha: 1), "Codex is an opaque grey \(grey): \(codex)")
+        precondition(close(claude, claudeTarget, alpha: 1), "Claude is the opaque orange × 0.92 \(claudeTarget): \(claude)")
+        report.append("\(dark ? "dark" : "light"): title \(title.r),\(title.g),\(title.b) a\(String(format: "%.2f", title.alpha)); Codex \(codex.r),\(codex.g),\(codex.b) a\(String(format: "%.2f", codex.alpha)); Claude \(claude.r),\(claude.g),\(claude.b) a\(String(format: "%.2f", claude.alpha))")
+    }
+    // Hue and saturation equal the badge's; only brightness is lower.
+    let badge = NotchQProvider.claude.color.usingColorSpace(.sRGB)!, menu = NotchQMenuPalette.claude.usingColorSpace(.sRGB)!
+    precondition(abs(badge.hueComponent - menu.hueComponent) < 0.003 && abs(badge.saturationComponent - menu.saturationComponent) < 0.003 && abs(menu.brightnessComponent / badge.brightnessComponent - 0.92) < 0.003 && menu.alphaComponent == 1, "Claude: badge hue and saturation, brightness × 0.92, opaque")
+    // Retitling a row in place keeps its view (the open menu is not rebuilt).
+    let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    NotchQAppDelegate.notchQSetMenuRow(item, "Weekly: 40% left", provider: .claude); let view = item.view
+    NotchQAppDelegate.notchQSetMenuRow(item, "Weekly: 39% left", provider: .claude)
+    precondition(item.view === view && (view as? NotchQMenuRowView)?.text == "Weekly: 39% left" && item.title == "Weekly: 39% left", "same view, new text")
+    NotchQAppDelegate.notchQSetMenuRow(item, "Last updated: 12:00:00 (0 s ago)", provider: .claude)
+    precondition(item.view == nil && item.attributedTitle == nil && item.title.hasPrefix("Last updated"), "a faded row is a plain disabled item again")
+    print("Passed menu colour pixel checks: " + report.joined(separator: " | "))
 }
 
 /// The open dropdown keeps its time-dependent rows current by retitling the same menu items.
@@ -78,6 +143,7 @@ func runNotchQLiveMenuChecks() {
     clock = start.addingTimeInterval(60); delegate.notchQTickMenu()
     precondition(titles(.codex).count == 5 && !menu.items.contains { $0.title.hasPrefix("Next check") } && menu.items.count == all.count - 1, "a row that no longer applies is removed")
     delegate.state.notchQRecordFailure("Offline", now: clock); delegate.notchQTickMenu()
+    precondition(delegate.liveMenuRows[.codex]!.allSatisfy { $0.attributedTitle == nil && $0.view == nil }, "an error turns the section's rows back to faded")
     precondition(titles(.codex)[0] == "Offline" && titles(.codex).contains("Last known 5-hour: 42% left") && titles(.codex).contains { $0.hasPrefix("Retry in ") }, "an error and its retry row are added")
     let order = menu.items
     precondition(order.firstIndex { $0 === delegate.liveMenuHeaders[.codex]! }! + titles(.codex).count < order.firstIndex { $0 === claudeHeader }! && order.contains { $0 === settings } && zip(delegate.liveMenuRows[.claude]!, claude).allSatisfy { $0 === $1 }, "added rows stay inside their provider's section")
@@ -87,8 +153,8 @@ func runNotchQLiveMenuChecks() {
     precondition(titles(.codex) == frozen, "a closed menu is left alone")
 }
 
-/// The pulse on a figure whose weekly limit is nearly used up: which provider, where, when it runs,
-/// Reduce Motion, and that the figure does not move.
+/// The blink on a figure whose shown limit is nearly used up: which provider, which rhythm, where, when it
+/// runs, Reduce Motion, and that the figure does not move.
 func runNotchQPulseChecks() {
     _ = NSApplication.shared
     // The layer on its own.
@@ -96,8 +162,11 @@ func runNotchQPulseChecks() {
     layer.notchQApply(shown: false, animate: true, reduceMotion: false)
     precondition(layer.isHidden && !layer.animating && !layer.staticCue && layer.starts == 0 && layer.hitTest(.zero) == nil, "nothing to pulse; clicks pass through")
     layer.notchQApply(shown: true, animate: true, reduceMotion: false)
-    let running = layer.layer?.animation(forKey: NotchQPulseView.animationKey) as? CABasicAnimation
-    precondition(!layer.isHidden && layer.animating && layer.starts == 1 && layer.alphaValue == 1 && running?.keyPath == "opacity" && (running?.toValue as? Float) == 0.25 && running?.duration == 1.0 && running?.autoreverses == true && running?.repeatCount == .infinity, "an opacity loop: 1.0 to 0.25 over 1 s and back (2 s per cycle), repeating")
+    let running = layer.layer?.animation(forKey: NotchQPulseView.animationKey) as? CAKeyframeAnimation
+    precondition(layer.rhythm == .weekly && !layer.isHidden && layer.animating && layer.starts == 1 && layer.alphaValue == 1 && running?.keyPath == "opacity" && (running?.values as? [Float]) == NotchQPulseRhythm.weekly.opacities && running?.duration == 1.4 && running?.repeatCount == .infinity && running?.timingFunctions?.count == 5, "weekly: a sharp, eased double dip to 0.1 every 1.4 s, repeating")
+    let soft = NotchQPulseView(rhythm: .fiveHour); soft.notchQApply(shown: true, animate: true, reduceMotion: false)
+    let softLoop = soft.layer?.animation(forKey: NotchQPulseView.animationKey) as? CAKeyframeAnimation
+    precondition(soft.animating && (softLoop?.values as? [Float]) == [1, 0.25, 1] && softLoop?.duration == 2.0 && softLoop?.repeatCount == .infinity && softLoop?.timingFunctions?.count == 2, "5-hour: the soft, eased 1.0 to 0.25 and back over 2 s that weekly used before")
     for _ in 0..<5 { layer.notchQApply(shown: true, animate: true, reduceMotion: false) }
     precondition(layer.starts == 1, "refreshing does not restart the loop")
     layer.notchQApply(shown: true, animate: true, reduceMotion: true)
@@ -122,6 +191,8 @@ func runNotchQPulseChecks() {
     let saved = defaults.persistentDomain(forName: domain)
     defer { if let saved = saved { defaults.setPersistentDomain(saved, forName: domain) } else { defaults.removePersistentDomain(forName: domain) } }
     defaults.set(false, forKey: "preferNotchPosition")
+    // First a picture with nothing low: a 3% threshold keeps Claude's 4% 5-hour figure from blinking.
+    defaults.set(3, forKey: NotchQPreferences.lowLimitThresholdKey)
     let delegate = NotchQAppDelegate()
     var reduce = false
     delegate.reduceMotion = { reduce }
@@ -162,10 +233,11 @@ func runNotchQPulseChecks() {
     notch.panel.setContentSize(notch.badgeSize)
     button.layoutSubtreeIfNeeded()
     let plain = picture(button), plainNotch = picture(notch.panel.contentView!)
-    precondition(delegate.pulsingProviders.isEmpty && pulse.isHidden && !pulse.animating && notch.pulseView.isHidden && notch.pulseRanges.isEmpty && button.attributedTitle.string == "42%  4%", "no pulse while weekly has 5% or more")
-    // Claude's weekly limit is down to 4%: the same "4%" is now the weekly figure, and only it pulses.
+    precondition(delegate.pulsingProviders.isEmpty && pulse.isHidden && !pulse.animating && notch.pulseView.isHidden && notch.pulseRanges.isEmpty && button.attributedTitle.string == "42%  4%", "no pulse while every limit is above the threshold")
+    // Back to the default 10%. Claude's weekly limit is down to 4%: the same "4%" is now the weekly figure, and only it pulses.
+    defaults.removeObject(forKey: NotchQPreferences.lowLimitThresholdKey)
     show(codex: reading(42, 30), claude: reading(60, 4))
-    precondition(delegate.pulsingProviders == [.claude] && delegate.statusPulseRanges == [NSRange(location: 5, length: 2)] && notch.pulseRanges == [NSRange(location: 5, length: 2)], "only Claude's figure is marked, in both placements")
+    precondition(delegate.pulsingProviders == [.claude] && delegate.pulsingLimits == [.claude: .weekly] && delegate.statusPulseRanges == [.weekly: [NSRange(location: 5, length: 2)]] && notch.pulseRanges == [.weekly: [NSRange(location: 5, length: 2)]], "only Claude's figure is marked, with the weekly rhythm, in both placements")
     precondition(!pulse.isHidden && pulse.animating && pulse.superview === button && pulse.starts == 1 && !notch.pulseView.animating, "the menu-bar item is on screen, so its figure pulses; the hidden notch badge does not")
     precondition(button.attributedTitle.string == "42%  4%" && (button.attributedTitle.attribute(.foregroundColor, at: 5, effectiveRange: nil) as? NSColor) == .clear && (button.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor) != .clear, "the item leaves Claude's figure to the pulse layer and still draws Codex itself")
     precondition(button.toolTip?.contains("Claude Weekly 4% remaining (weekly limit nearly used up)") == true && button.toolTip?.contains("Codex 5-hour 42% remaining") == true, "the tooltip says which limit is shown")
@@ -189,13 +261,23 @@ func runNotchQPulseChecks() {
     precondition(pulse.animating && pulse.starts == 3, "awake again: the pulse returns")
     // Codex instead, then both, then neither.
     show(codex: reading(70, 2), claude: reading(60, 40))
-    precondition(delegate.pulsingProviders == [.codex] && delegate.statusPulseRanges == [NSRange(location: 0, length: 2)] && button.attributedTitle.string == "2%  60%" && pulse.animating, "Codex follows the same rule; Claude is left alone")
+    precondition(delegate.pulsingProviders == [.codex] && delegate.statusPulseRanges == [.weekly: [NSRange(location: 0, length: 2)]] && button.attributedTitle.string == "2%  60%" && pulse.animating, "Codex follows the same rule; Claude is left alone")
     show(codex: reading(70, 2), claude: reading(60, 0))
-    precondition(delegate.pulsingProviders == [.codex, .claude] && delegate.statusPulseRanges.count == 2, "both can be nearly used up at once")
+    precondition(delegate.pulsingProviders == [.codex, .claude] && delegate.statusPulseRanges[.weekly]?.count == 2 && delegate.statusPulseRanges[.fiveHour] == nil, "both can be nearly used up at once")
+    // The new 5-hour warning: Codex's 5-hour figure at 8% blinks softly while Claude's weekly 4% blinks sharply.
+    let softLayer = delegate.statusPulses[.fiveHour]!
+    show(codex: reading(8, 40), claude: reading(60, 4))
+    precondition(delegate.pulsingLimits == [.codex: .fiveHour, .claude: .weekly] && delegate.statusPulseRanges == [.fiveHour: [NSRange(location: 0, length: 2)], .weekly: [NSRange(location: 4, length: 2)]] && button.attributedTitle.string == "8%  4%", "each figure is marked with its own limit")
+    precondition(softLayer.animating && softLayer.rhythm == .fiveHour && pulse.animating && softLayer.superview === button && (button.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor) == .clear && (button.attributedTitle.attribute(.foregroundColor, at: 4, effectiveRange: nil) as? NSColor) == .clear, "two rhythms at once, each on its own layer; the item draws neither figure itself")
+    precondition(button.toolTip?.contains("Codex 5-hour 8% remaining (5-hour limit nearly used up)") == true, "the tooltip names the 5-hour limit")
+    show(codex: reading(10, 40), claude: reading(60, 40))
+    precondition(delegate.pulsingLimits == [.codex: .fiveHour] && softLayer.animating && !pulse.animating && pulse.isHidden, "exactly 10% left warns; the unused weekly layer stops")
+    show(codex: reading(5, 8), claude: reading(60, 40))
+    precondition(delegate.pulsingLimits == [.codex: .weekly] && button.attributedTitle.string == "8%  60%" && pulse.animating && !softLayer.animating, "both Codex limits low: the weekly figure and rhythm win")
     delegate.claudeState.notchQRecordFailure("Offline"); delegate.notchQRenderBadge()
-    precondition(delegate.pulsingProviders == [.codex] && button.attributedTitle.string == "2%  —%", "no figure, no pulse for that provider")
-    show(codex: reading(70, 5), claude: reading(60, 40))
-    precondition(delegate.pulsingProviders.isEmpty && pulse.isHidden && !pulse.animating && delegate.statusPulseRanges.isEmpty && (button.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor) != .clear, "the pulse ends when weekly is back at 5% or more")
+    precondition(delegate.pulsingProviders == [.codex] && button.attributedTitle.string == "8%  —%", "no figure, no pulse for that provider")
+    show(codex: reading(70, 11), claude: reading(60, 40))
+    precondition(delegate.pulsingProviders.isEmpty && pulse.isHidden && !pulse.animating && !softLayer.animating && delegate.statusPulseRanges.isEmpty && (button.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor) != .clear, "the pulse ends when every limit is above the threshold")
     // Beside the notch (only on a Mac that has one): the badge pulses and the hidden menu-bar item does not.
     defaults.set(true, forKey: "preferNotchPosition")
     show(codex: reading(42, 30), claude: reading(60, 4))
@@ -211,5 +293,5 @@ func runNotchQPulseChecks() {
     } else {
         precondition(!notch.pulseView.animating && pulse.animating, "no notch: the menu-bar item carries the pulse")
     }
-    print("Passed pulse checks: rule per provider, both placements, no restart on refresh, Reduce Motion, sleep/wake, unchanged pixel positions")
+    print("Passed pulse checks: 5-hour and weekly rhythms, rule per provider, weekly wins, both placements, no restart on refresh, Reduce Motion, sleep/wake, unchanged pixel positions")
 }
